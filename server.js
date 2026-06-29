@@ -92,12 +92,20 @@ async function resolveUrl(_req, res, payload) {
   }
 
   const isDouyin = /(^|\.)douyin\.com$|(^|\.)iesdouyin\.com$|v\.douyin\.com$/i.test(parsedUrl.hostname);
+  const isEeoArticle = isEeoArticleUrl(parsedUrl);
   try {
     const page = await fetchPublicPage(parsedUrl.href);
     const title = page.title || (isDouyin ? "抖音主页或作品链接" : "网页链接");
     const body = page.text.trim();
     if (isDouyin && body.length < 800) {
       return sendJson(res, 200, buildDouyinLimitedSource(parsedUrl.href, title));
+    }
+    if (body.length < 120 || isLikelyShellPage(body, title)) {
+      if (isEeoArticle) {
+        const eeoSource = await fetchEeoArticleFallback(parsedUrl).catch(() => null);
+        if (eeoSource) return sendJson(res, 200, eeoSource);
+      }
+      return sendJson(res, 200, buildLimitedWebSource(parsedUrl.href, title, "页面正文可能由前端动态渲染，当前没有读取到足够正文。"));
     }
     return sendJson(res, 200, {
       type: isDouyin ? "douyin" : "url",
@@ -111,20 +119,17 @@ async function resolveUrl(_req, res, payload) {
     if (isDouyin) {
       return sendJson(res, 200, buildDouyinLimitedSource(parsedUrl.href, "抖音主页或作品链接"));
     }
-    return sendJson(res, 200, {
-      type: "url",
-      title: "网页链接",
-      url: parsedUrl.href,
-      body: `网页链接已记录，但当前后端没有读取到正文。错误：${error.message}`,
-      status: "读取受限，已记录链接",
-      limited: true
-    });
+    if (isEeoArticle) {
+      const eeoSource = await fetchEeoArticleFallback(parsedUrl).catch(() => null);
+      if (eeoSource) return sendJson(res, 200, eeoSource);
+    }
+    return sendJson(res, 200, buildLimitedWebSource(parsedUrl.href, "网页链接", `当前后端没有读取到正文。错误：${error.message}`));
   }
 }
 
 async function fetchPublicPage(url) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 10000);
+  const timer = setTimeout(() => controller.abort(), 25000);
   try {
     const response = await fetch(url, {
       signal: controller.signal,
@@ -135,7 +140,12 @@ async function fetchPublicPage(url) {
       }
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const html = await response.text();
+    const contentType = response.headers.get("content-type") || "";
+    const buffer = await response.arrayBuffer();
+    const uint8 = new Uint8Array(buffer);
+    const head = new TextDecoder("utf-8", { fatal: false }).decode(uint8.slice(0, 4096));
+    const charset = detectCharset(contentType, head);
+    const html = new TextDecoder(charset, { fatal: false }).decode(uint8);
     return extractHtmlSummary(html);
   } finally {
     clearTimeout(timer);
@@ -164,6 +174,77 @@ function extractHtmlSummary(html) {
   };
 }
 
+function detectCharset(contentType, htmlHead) {
+  const fromHeader = contentType.match(/charset=([^;\s]+)/i)?.[1];
+  const fromMeta =
+    htmlHead.match(/<meta[^>]+charset=["']?([^"'\s/>]+)/i)?.[1] ||
+    htmlHead.match(/<meta[^>]+content=["'][^"']*charset=([^"';\s]+)/i)?.[1];
+  const raw = String(fromHeader || fromMeta || "utf-8").toLowerCase().replace(/["']/g, "");
+  if (raw.includes("gb2312") || raw.includes("gbk") || raw.includes("gb18030")) return "gb18030";
+  if (raw.includes("utf8") || raw.includes("utf-8")) return "utf-8";
+  return raw;
+}
+
+function isLikelyShellPage(body, title) {
+  const compact = body.replace(/\s+/g, "");
+  const compactTitle = String(title || "").replace(/\s+/g, "");
+  if (!compact) return true;
+  if (compactTitle && compact === compactTitle.repeat(Math.max(1, Math.floor(compact.length / compactTitle.length)))) return true;
+  return compact.length < 80;
+}
+
+function isEeoArticleUrl(parsedUrl) {
+  return /(^|\.)eeo\.com\.cn$/i.test(parsedUrl.hostname) && /\/article\/info/i.test(parsedUrl.pathname) && parsedUrl.searchParams.has("id");
+}
+
+async function fetchEeoArticleFallback(parsedUrl) {
+  const articleId = parsedUrl.searchParams.get("id");
+  if (!articleId) return null;
+
+  const form = new URLSearchParams({
+    id: articleId,
+    customerUuid: "",
+    publishChannels: "",
+    action: "2",
+    channelUuid: parsedUrl.searchParams.get("channelUuid") || "",
+    requestType: "",
+    language: "zh-Hans",
+    appName: "eeoLocal"
+  });
+
+  const response = await fetch("https://jg-jgxw.eeo.com.cn/api/homePage/v0/toArticleShare/web", {
+    method: "POST",
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+      "Content-Type": "application/x-www-form-urlencoded;charset=utf-8",
+      "Accept": "application/json,text/plain,*/*",
+      "Origin": "https://jg-mvvm.eeo.com.cn",
+      "Referer": parsedUrl.href
+    },
+    body: form.toString()
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+  const json = await response.json();
+  const data = json.data || {};
+  const title = cleanText(data.titleText || data.titleCon || "经观文章");
+  if (!title && !data.imgUrl) return null;
+
+  return {
+    type: "url",
+    title: title || "经观文章",
+    url: parsedUrl.href,
+    body: [
+      "经观链接已识别，并读取到文章标题。",
+      title ? `标题：${title}` : "",
+      data.imgUrl ? `封面：${data.imgUrl}` : "",
+      "正文由经观前端接口动态加载，当前没有拿到完整正文。请粘贴正文后继续分析。"
+    ].filter(Boolean).join("\n"),
+    status: "已读取标题，正文受限",
+    limited: true
+  };
+}
+
 function buildDouyinLimitedSource(url, title) {
   return {
     type: "douyin",
@@ -175,6 +256,21 @@ function buildDouyinLimitedSource(url, title) {
       "当前仅能把该链接作为待补充材料，不会把它误判为已完整读取。"
     ].join("\n"),
     status: "抖音读取受限，需补充作品数据",
+    limited: true
+  };
+}
+
+function buildLimitedWebSource(url, title, reason) {
+  return {
+    type: "url",
+    title,
+    url,
+    body: [
+      "网页链接已记录，但没有读取到足够正文。",
+      reason,
+      "可以直接粘贴文章正文，或换一个可公开读取的网页链接。"
+    ].join("\n"),
+    status: "读取受限，需补充正文",
     limited: true
   };
 }
@@ -504,14 +600,16 @@ function parseJson(text) {
 function normalizeSources(sources) {
   let total = 0;
   return sources.slice(0, 24).map((source) => {
-    const body = String(source.body || "").slice(0, Math.max(0, 24000 - total));
+    const limited = Boolean(source.limited) || /读取受限|需补充|待后端/.test(source.status || "");
+    const body = limited ? "" : String(source.body || "").slice(0, Math.max(0, 24000 - total));
     total += body.length;
     return {
       type: source.type || "text",
       title: String(source.title || "未命名材料").slice(0, 160),
       status: source.status || "",
       url: source.url || "",
-      body
+      body,
+      limited
     };
   });
 }
@@ -619,6 +717,12 @@ function decodeHtml(value) {
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/&#(\d+);/g, (_match, code) => String.fromCharCode(Number(code)));
+}
+
+function cleanText(value) {
+  return decodeHtml(String(value || "").replace(/<[^>]+>/g, " "))
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function handleCors(req, res) {

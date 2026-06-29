@@ -350,7 +350,10 @@ function addDemoSource() {
 }
 
 function analyzeSources(sources, rules) {
-  const text = sources.map((source) => `${source.title}\n${source.body || ""}\n${source.url || ""}`).join("\n");
+  const readableSources = sources.filter((source) => !isLimitedSource(source));
+  const text = (readableSources.length ? readableSources : sources)
+    .map((source) => `${source.title}\n${isLimitedSource(source) ? "" : source.body || ""}\n${source.url || ""}`)
+    .join("\n");
   const hasDouyin = sources.some((source) => source.type === "douyin" || /抖音|视频|口播|账号|播放|点赞/.test(source.body || ""));
   const keywordCounts = extractKeywords(text);
   const domains = scoreDomains(text);
@@ -447,11 +450,15 @@ function normalizeScore(value) {
 }
 
 function getConfidence(sources) {
-  const readable = sources.filter((source) => source.body && !/待后端/.test(source.status || "")).length;
+  const readable = sources.filter((source) => source.body && !isLimitedSource(source)).length;
   const pending = sources.length - readable;
   if (readable >= 3 && pending === 0) return "高";
   if (readable >= 1 && pending <= readable) return "中";
   return "待补充";
+}
+
+function isLimitedSource(source) {
+  return Boolean(source.limited) || /待后端|读取受限|需补充/.test(source.status || "");
 }
 
 function buildContentFeatures(text, domains) {
