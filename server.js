@@ -278,6 +278,11 @@ function buildLimitedWebSource(url, title, reason) {
 async function analyze(_req, res, payload) {
   const sources = normalizeSources(payload.sources || []);
   const rules = normalizeRules(payload.rules || []);
+  if (!hasReadableSources(sources)) {
+    return sendJson(res, 422, {
+      error: "没有读取到可分析正文。请粘贴文章正文，或使用可公开读取的新闻/文章链接。"
+    });
+  }
   const text = await callOpenAI({
     instructions: [
       "你是 Content Simulator 的文风分析后台。",
@@ -612,6 +617,10 @@ function normalizeSources(sources) {
       limited
     };
   });
+}
+
+function hasReadableSources(sources) {
+  return sources.some((source) => source.body && !source.limited);
 }
 
 function normalizeProfile(profile, rules = []) {

@@ -319,6 +319,11 @@ async function analyzeAndGo(shouldNavigate = true) {
   if (!state.sources.length) {
     addDemoSource();
   }
+  if (!hasReadableSource()) {
+    setApiStatus("缺少正文", "offline");
+    alert("没有读到可分析正文。请粘贴文章正文，或换一个可公开读取的新闻/文章链接。抖音主页和部分动态网页需要补充作品数据。");
+    return;
+  }
   await withBusy(els.analyzeBtn, "正在读稿", async () => {
     try {
       setApiStatus("AI 分析中", "busy");
@@ -330,13 +335,18 @@ async function analyzeAndGo(shouldNavigate = true) {
       setApiStatus("AI 后台", "online");
     } catch (error) {
       console.warn(error);
-      state.profile = analyzeSources(state.sources, state.rules);
-      setApiStatus("本地模式", "offline");
+      setApiStatus("分析失败", "offline");
+      alert(error.message || "AI 分析失败，请检查后端 Key 和链接内容。");
+      return;
     }
     saveState();
     renderProfile();
     if (shouldNavigate) goStep("profile");
   });
+}
+
+function hasReadableSource() {
+  return state.sources.some((source) => source.body && !isLimitedSource(source));
 }
 
 function addDemoSource() {
