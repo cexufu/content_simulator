@@ -16,13 +16,13 @@ python3 -m http.server 10006 --directory .
 
 然后访问 `http://localhost:10006`。
 
-接入 OpenAI 后台：
+接入 DeepSeek 后台：
 
 ```bash
 cp .env.example .env
 ```
 
-把 `.env` 里的 `OPENAI_API_KEY` 换成真实 Key，然后运行：
+把 `.env` 里的 `DEEPSEEK_API_KEY` 换成真实 Key，然后运行：
 
 ```bash
 npm start
@@ -30,21 +30,21 @@ npm start
 
 访问 `http://localhost:10006`。
 
-## OpenAI 配置
+## 模型配置
 
 ```bash
-OPENAI_API_KEY=sk-your-openai-api-key
-OPENAI_MODEL=gpt-5.5
-OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_API_STYLE=responses
+DEEPSEEK_API_KEY=sk-your-deepseek-api-key
+MODEL_NAME=deepseek-v4-flash
+MODEL_BASE_URL=https://api.deepseek.com
+MODEL_API_STYLE=chat
 PORT=10006
 ALLOWED_ORIGIN=
 ```
 
-- `OPENAI_API_KEY`：只放在后端环境变量里，不要写进前端。
-- `OPENAI_MODEL`：默认 `gpt-5.5`，如果账号不可用，可以换成你有权限的模型。
-- `OPENAI_BASE_URL`：默认官方 OpenAI；也可以换成 OpenAI-compatible 网关。
-- `OPENAI_API_STYLE`：官方 Responses API 用 `responses`；大多数兼容网关用 `chat`。
+- `DEEPSEEK_API_KEY`：只放在后端环境变量里，不要写进前端。
+- `MODEL_NAME`：默认 `deepseek-v4-flash`，可换成账号可用的 DeepSeek 模型。
+- `MODEL_BASE_URL`：默认 `https://api.deepseek.com`。
+- `MODEL_API_STYLE`：DeepSeek 使用 `chat`。
 - `ALLOWED_ORIGIN`：如果前端部署在 GitHub Pages、后端部署在其他域名，可设置为 GitHub Pages 地址。
 
 如果 GitHub Pages 前端要连接独立后端，首次访问时可以带上：
@@ -75,10 +75,10 @@ cd content_simulator
 4. 创建 `.env`，填入：
 
 ```bash
-OPENAI_API_KEY=你的真实Key
-OPENAI_MODEL=gpt-5.5
-OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_API_STYLE=responses
+DEEPSEEK_API_KEY=你的真实Key
+MODEL_NAME=deepseek-v4-flash
+MODEL_BASE_URL=https://api.deepseek.com
+MODEL_API_STYLE=chat
 PORT=10006
 ```
 
@@ -95,13 +95,13 @@ npm start
 http://服务器IP:10006
 ```
 
-如果服务器不能访问官方 OpenAI，可以换成 OpenAI-compatible 网关：
+如果要换成其他 OpenAI-compatible 网关：
 
 ```bash
-OPENAI_API_KEY=你的网关Key
-OPENAI_MODEL=你的模型名
-OPENAI_BASE_URL=https://你的网关域名/v1
-OPENAI_API_STYLE=chat
+MODEL_API_KEY=你的网关Key
+MODEL_NAME=你的模型名
+MODEL_BASE_URL=https://你的网关域名/v1
+MODEL_API_STYLE=chat
 ```
 
 这样前端和后端仍然不用改代码。
@@ -117,4 +117,4 @@ OPENAI_API_STYLE=chat
 
 - TXT、Markdown、HTML 文件会在浏览器内读取。
 - PDF、Word、抖音主页链接会被记录，并预留后端连接器状态。
-- 抖音主页读取仍需要单独连接器；当前后端先接 OpenAI 文风学习与生成。
+- 抖音主页读取仍需要单独连接器；当前后端先接 DeepSeek 文风学习与生成。

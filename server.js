@@ -5,10 +5,12 @@ const path = require("path");
 loadEnv();
 
 const PORT = Number(process.env.PORT || 10006);
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
-const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.5";
-const OPENAI_BASE_URL = trimTrailingSlash(process.env.OPENAI_BASE_URL || "https://api.openai.com/v1");
-const OPENAI_API_STYLE = process.env.OPENAI_API_STYLE || "responses";
+const MODEL_API_KEY = process.env.MODEL_API_KEY || process.env.DEEPSEEK_API_KEY || process.env.OPENAI_API_KEY || "";
+const MODEL_NAME = process.env.MODEL_NAME || process.env.DEEPSEEK_MODEL || process.env.OPENAI_MODEL || "deepseek-v4-flash";
+const MODEL_BASE_URL = trimTrailingSlash(
+  process.env.MODEL_BASE_URL || process.env.DEEPSEEK_BASE_URL || process.env.OPENAI_BASE_URL || "https://api.deepseek.com"
+);
+const MODEL_API_STYLE = process.env.MODEL_API_STYLE || process.env.OPENAI_API_STYLE || "chat";
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "";
 const ROOT = __dirname;
 const BODY_LIMIT = 4 * 1024 * 1024;
@@ -34,10 +36,10 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/api/health") {
       return sendJson(res, 200, {
         ok: true,
-        configured: Boolean(OPENAI_API_KEY),
-        model: OPENAI_MODEL,
-        apiStyle: OPENAI_API_STYLE,
-        baseUrl: maskBaseUrl(OPENAI_BASE_URL)
+        configured: Boolean(MODEL_API_KEY),
+        model: MODEL_NAME,
+        apiStyle: MODEL_API_STYLE,
+        baseUrl: maskBaseUrl(MODEL_BASE_URL)
       });
     }
 
@@ -60,8 +62,8 @@ async function handleApi(req, res, pathname) {
   if (req.method !== "POST") {
     return sendJson(res, 405, { error: "Method not allowed" });
   }
-  if (!OPENAI_API_KEY) {
-    return sendJson(res, 503, { error: "OPENAI_API_KEY is not configured" });
+  if (!MODEL_API_KEY) {
+    return sendJson(res, 503, { error: "MODEL_API_KEY or DEEPSEEK_API_KEY is not configured" });
   }
 
   const payload = await readJsonBody(req);
@@ -191,21 +193,21 @@ async function reviseDraft(_req, res, payload) {
 }
 
 async function callOpenAI({ instructions, input }) {
-  if (OPENAI_API_STYLE === "chat") {
+  if (MODEL_API_STYLE === "chat") {
     return callChatCompletions({ instructions, input });
   }
   return callResponses({ instructions, input });
 }
 
 async function callResponses({ instructions, input }) {
-  const response = await fetch(`${OPENAI_BASE_URL}/responses`, {
+  const response = await fetch(`${MODEL_BASE_URL}/responses`, {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${OPENAI_API_KEY}`,
+      "Authorization": `Bearer ${MODEL_API_KEY}`,
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      model: OPENAI_MODEL,
+      model: MODEL_NAME,
       instructions,
       input
     })
@@ -220,14 +222,14 @@ async function callResponses({ instructions, input }) {
 }
 
 async function callChatCompletions({ instructions, input }) {
-  const response = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
+  const response = await fetch(`${MODEL_BASE_URL}/chat/completions`, {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${OPENAI_API_KEY}`,
+      "Authorization": `Bearer ${MODEL_API_KEY}`,
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      model: OPENAI_MODEL,
+      model: MODEL_NAME,
       messages: [
         { role: "system", content: instructions },
         { role: "user", content: input }

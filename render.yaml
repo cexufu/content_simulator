@@ -7,11 +7,11 @@ services:
     startCommand: npm start
     healthCheckPath: /api/health
     envVars:
-      - key: OPENAI_API_KEY
+      - key: DEEPSEEK_API_KEY
         sync: false
-      - key: OPENAI_MODEL
-        value: gpt-5.5
-      - key: OPENAI_BASE_URL
-        value: https://api.openai.com/v1
-      - key: OPENAI_API_STYLE
-        value: responses
+      - key: MODEL_NAME
+        value: deepseek-v4-flash
+      - key: MODEL_BASE_URL
+        value: https://api.deepseek.com
+      - key: MODEL_API_STYLE
+        value: chat
