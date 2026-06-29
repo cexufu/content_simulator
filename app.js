@@ -1,4 +1,5 @@
 const STORAGE_KEY = "content-simulator-state-v1";
+const API_BASE = (window.CONTENT_SIMULATOR_API_BASE || "").replace(/\/$/, "");
 
 const state = {
   accepted: false,
@@ -36,6 +37,7 @@ function cacheElements() {
     "consentModal",
     "acceptConsent",
     "clearDataBtn",
+    "apiStatus",
     "textInput",
     "addTextBtn",
     "fileInput",
@@ -108,24 +110,25 @@ function bindEvents() {
   els.fileInput.addEventListener("change", handleFiles);
   bindDropzone();
   els.addUrlBtn.addEventListener("click", addUrlSource);
-  els.analyzeBtn.addEventListener("click", analyzeAndGo);
+  els.analyzeBtn.addEventListener("click", () => analyzeAndGo());
   els.saveRulesBtn.addEventListener("click", saveRulesFromInput);
-  els.profileChatBtn.addEventListener("click", sendProfileMessage);
+  els.profileChatBtn.addEventListener("click", () => sendProfileMessage());
   els.profileChatInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter") sendProfileMessage();
   });
-  els.confirmProfileBtn.addEventListener("click", () => {
-    if (!state.profile) analyzeAndGo(false);
+  els.confirmProfileBtn.addEventListener("click", async () => {
+    if (!state.profile) await analyzeAndGo(false);
     goStep("deliver");
   });
-  els.generateBtn.addEventListener("click", generateDraft);
-  els.deliverChatBtn.addEventListener("click", sendDeliverMessage);
+  els.generateBtn.addEventListener("click", () => generateDraft());
+  els.deliverChatBtn.addEventListener("click", () => sendDeliverMessage());
   els.deliverChatInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter") sendDeliverMessage();
   });
   els.copyBtn.addEventListener("click", copyDraft);
   els.downloadTxtBtn.addEventListener("click", () => downloadDraft("txt"));
   els.downloadMdBtn.addEventListener("click", () => downloadDraft("md"));
+  checkApiHealth();
 }
 
 function loadState() {
@@ -283,14 +286,28 @@ function sourceLabel(source) {
   return "文本";
 }
 
-function analyzeAndGo(shouldNavigate = true) {
+async function analyzeAndGo(shouldNavigate = true) {
   if (!state.sources.length) {
     addDemoSource();
   }
-  state.profile = analyzeSources(state.sources, state.rules);
-  saveState();
-  renderProfile();
-  if (shouldNavigate) goStep("profile");
+  await withBusy(els.analyzeBtn, "正在读稿", async () => {
+    try {
+      setApiStatus("AI 分析中", "busy");
+      const result = await postApi("/api/analyze", {
+        sources: state.sources,
+        rules: state.rules
+      });
+      state.profile = result.profile;
+      setApiStatus("AI 后台", "online");
+    } catch (error) {
+      console.warn(error);
+      state.profile = analyzeSources(state.sources, state.rules);
+      setApiStatus("本地模式", "offline");
+    }
+    saveState();
+    renderProfile();
+    if (shouldNavigate) goStep("profile");
+  });
 }
 
 function addDemoSource() {
@@ -565,16 +582,34 @@ function renderSummary(profile) {
   `;
 }
 
-function sendProfileMessage() {
+async function sendProfileMessage() {
   const message = els.profileChatInput.value.trim();
   if (!message) return;
   state.profileChat.push({ role: "user", text: message });
-  const rules = splitRules(message);
-  if (rules.length) {
-    state.rules = unique([...state.rules, ...rules]);
-  }
-  state.profileChat.push({ role: "ai", text: "已记下。后续生成会按这条规则调整。" });
   els.profileChatInput.value = "";
+  renderChats();
+
+  try {
+    setApiStatus("AI 校准中", "busy");
+    const result = await postApi("/api/refine-profile", {
+      profile: state.profile || analyzeSources(state.sources, state.rules),
+      message,
+      rules: state.rules
+    });
+    state.profile = result.profile || state.profile;
+    state.rules = result.rules || state.rules;
+    state.profileChat.push({ role: "ai", text: result.reply || "已按你的反馈校准。" });
+    setApiStatus("AI 后台", "online");
+  } catch (error) {
+    console.warn(error);
+    const rules = splitRules(message);
+    if (rules.length) {
+      state.rules = unique([...state.rules, ...rules]);
+    }
+    state.profileChat.push({ role: "ai", text: "已记下。后续生成会按这条规则调整。" });
+    setApiStatus("本地模式", "offline");
+  }
+
   if (state.profile) state.profile.rules = state.rules;
   saveState();
   renderChats();
@@ -598,18 +633,35 @@ function renderChatLog(element, messages, emptyText) {
   element.scrollTop = element.scrollHeight;
 }
 
-function generateDraft() {
+async function generateDraft() {
   if (!state.profile) {
     state.profile = analyzeSources(state.sources, state.rules);
   }
   const task = els.taskInput.value.trim();
   if (!task) return;
   const type = document.querySelector('input[name="contentType"]:checked')?.value || "内容";
-  state.draft = composeDraft(type, task, state.profile, state.rules);
-  state.deliverChat = [{ role: "ai", text: "初稿已生成。可以继续说要改哪里。" }];
-  saveState();
-  renderDraft();
-  renderChats();
+  await withBusy(els.generateBtn, "正在生成", async () => {
+    try {
+      setApiStatus("AI 生成中", "busy");
+      const result = await postApi("/api/generate", {
+        type,
+        task,
+        profile: state.profile,
+        rules: state.rules
+      });
+      state.draft = result.draft || "";
+      state.deliverChat = [{ role: "ai", text: result.reply || "初稿已生成。可以继续说要改哪里。" }];
+      setApiStatus("AI 后台", "online");
+    } catch (error) {
+      console.warn(error);
+      state.draft = composeDraft(type, task, state.profile, state.rules);
+      state.deliverChat = [{ role: "ai", text: "初稿已生成。可以继续说要改哪里。" }];
+      setApiStatus("本地模式", "offline");
+    }
+    saveState();
+    renderDraft();
+    renderChats();
+  });
 }
 
 function composeDraft(type, task, profile, rules) {
@@ -619,13 +671,31 @@ function composeDraft(type, task, profile, rules) {
   return `标题：先把问题说清楚\n\n${task}\n\n我会先给一个判断：这件事真正重要的，不是把话说得更满，而是让表达更像自己。\n\n如果是做${type}，第一步不是追求复杂，而是确认读者到底在意什么。一个好的内容，通常有三个层次：先提出问题，再给出判断，最后落到一个可执行的建议。\n\n这次内容可以围绕「${keywords}」展开。语气保持${tones}，少一点空泛，多一点具体。不要急着下结论，也不要把每句话都写成口号。\n\n最后留一个轻的互动：你最想保留自己的哪一种表达习惯？${ruleText}`;
 }
 
-function sendDeliverMessage() {
+async function sendDeliverMessage() {
   const message = els.deliverChatInput.value.trim();
   if (!message || !state.draft) return;
   state.deliverChat.push({ role: "user", text: message });
-  state.draft = reviseDraft(state.draft, message);
-  state.deliverChat.push({ role: "ai", text: "已按你的意见修改。你可以继续调整语气、结构或长度。" });
   els.deliverChatInput.value = "";
+  renderChats();
+
+  try {
+    setApiStatus("AI 改稿中", "busy");
+    const result = await postApi("/api/revise", {
+      draft: state.draft,
+      instruction: message,
+      profile: state.profile,
+      rules: state.rules
+    });
+    state.draft = result.draft || state.draft;
+    state.deliverChat.push({ role: "ai", text: result.reply || "已按你的意见修改。" });
+    setApiStatus("AI 后台", "online");
+  } catch (error) {
+    console.warn(error);
+    state.draft = reviseDraft(state.draft, message);
+    state.deliverChat.push({ role: "ai", text: "已按你的意见修改。你可以继续调整语气、结构或长度。" });
+    setApiStatus("本地模式", "offline");
+  }
+
   saveState();
   renderDraft();
   renderChats();
@@ -740,4 +810,49 @@ function escapeHtml(value) {
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function checkApiHealth() {
+  try {
+    const response = await fetch(`${API_BASE}/api/health`, { cache: "no-store" });
+    if (!response.ok) throw new Error("health check failed");
+    const data = await response.json();
+    setApiStatus(data.configured ? "AI 后台" : "缺少 Key", data.configured ? "online" : "offline");
+  } catch (_error) {
+    setApiStatus("本地模式", "offline");
+  }
+}
+
+async function postApi(path, payload) {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error || `API request failed: ${response.status}`);
+  }
+  return data;
+}
+
+async function withBusy(button, label, task) {
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = label;
+  try {
+    await task();
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+
+function setApiStatus(text, mode) {
+  if (!els.apiStatus) return;
+  els.apiStatus.textContent = text;
+  els.apiStatus.classList.remove("online", "offline", "busy");
+  els.apiStatus.classList.add(mode || "offline");
 }
