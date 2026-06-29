@@ -126,6 +126,7 @@ function bindEvents() {
   });
   els.confirmProfileBtn.addEventListener("click", async () => {
     if (!state.profile) await analyzeAndGo(false);
+    if (!state.profile) return;
     goStep("deliver");
   });
   els.generateBtn.addEventListener("click", () => generateDraft());
@@ -517,6 +518,10 @@ function buildTrafficFeatures(hasDouyin) {
 }
 
 function renderProfile() {
+  if (!state.profile && !hasReadableSource()) {
+    renderEmptyProfile();
+    return;
+  }
   const profile = state.profile || analyzeSources(state.sources, state.rules);
   els.confidenceLabel.textContent = `置信度：${profile.confidence}`;
   renderRadar(profile.tones);
@@ -528,6 +533,23 @@ function renderProfile() {
   renderFeatureList(els.trafficFeatures, profile.trafficFeatures);
   renderRules();
   renderSummary(profile);
+}
+
+function renderEmptyProfile() {
+  els.confidenceLabel.textContent = "未读到正文";
+  els.toneRadar.innerHTML = '<text class="radar-label" x="110" y="112" text-anchor="middle">待学习</text>';
+  els.domainDonut.style.background = "#ebe5d8";
+  els.domainLegend.innerHTML = '<div class="legend-item"><span class="legend-dot"></span>缺少可分析文本</div>';
+  els.keywordChips.innerHTML = '<span class="chip">请补充正文</span><span class="chip">或换可读取链接</span>';
+  renderFeatureList(els.contentFeatures, ["没有读取到可分析正文"]);
+  renderFeatureList(els.textFeatures, ["请粘贴文章正文、口播稿或上传 txt / md / html"]);
+  renderFeatureList(els.videoFeatures, ["抖音主页目前需要补充作品标题、文案和互动数据"]);
+  renderFeatureList(els.trafficFeatures, ["动态网页需要公开正文或专门连接器"]);
+  renderRules();
+  els.profileSummary.innerHTML = `
+    <div class="summary-line"><strong>状态：</strong>还没有形成可确认的风格画像。</div>
+    <div class="summary-line"><strong>处理：</strong>回到原稿收集区，补充正文后再开始读稿。</div>
+  `;
 }
 
 function renderRadar(tones) {
@@ -635,6 +657,14 @@ async function sendProfileMessage() {
   els.profileChatInput.value = "";
   renderChats();
 
+  if (!state.profile && !hasReadableSource()) {
+    state.profileChat.push({ role: "ai", text: "还没有读到可分析正文。请先补充原稿正文，或换一个可公开读取的文章链接。" });
+    saveState();
+    renderChats();
+    renderProfile();
+    return;
+  }
+
   try {
     setApiStatus("AI 校准中", "busy");
     const result = await postApi("/api/refine-profile", {
@@ -681,7 +711,8 @@ function renderChatLog(element, messages, emptyText) {
 
 async function generateDraft() {
   if (!state.profile) {
-    state.profile = analyzeSources(state.sources, state.rules);
+    await analyzeAndGo(false);
+    if (!state.profile) return;
   }
   const task = els.taskInput.value.trim();
   if (!task) return;
