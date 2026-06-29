@@ -51,6 +51,24 @@ https://cexufu.github.io/content_simulator/?api=https://your-backend.example.com
 
 这个后端地址会保存在当前浏览器本地。
 
+## 今天上线建议
+
+最快方式是把整个仓库部署成一个 Node Web Service，让同一个域名同时承载网页和 `/api/*` 后端。
+
+Render 部署步骤：
+
+1. 进入 Render，选择 `New Web Service`。
+2. 连接 GitHub 仓库 `cexufu/content_simulator`。
+3. 选择 `main` 分支。
+4. Build Command 使用 `npm install`。
+5. Start Command 使用 `npm start`。
+6. 添加环境变量：
+   - `OPENAI_API_KEY`：填你的真实 Key。
+   - `OPENAI_MODEL`：默认 `gpt-5.5`，如果账号无权限，换成你有权限的模型。
+7. 部署完成后，直接访问 Render 提供的域名。
+
+这个方式不需要 GitHub Pages，也不需要在前端暴露 Key。
+
 ## API
 
 - `POST /api/analyze`：分析原稿，返回文风画像。
