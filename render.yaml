@@ -11,3 +11,7 @@ services:
         sync: false
       - key: OPENAI_MODEL
         value: gpt-5.5
+      - key: OPENAI_BASE_URL
+        value: https://api.openai.com/v1
+      - key: OPENAI_API_STYLE
+        value: responses

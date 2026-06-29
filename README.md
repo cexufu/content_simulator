@@ -35,12 +35,16 @@ npm start
 ```bash
 OPENAI_API_KEY=sk-your-openai-api-key
 OPENAI_MODEL=gpt-5.5
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_API_STYLE=responses
 PORT=10006
 ALLOWED_ORIGIN=
 ```
 
 - `OPENAI_API_KEY`：只放在后端环境变量里，不要写进前端。
 - `OPENAI_MODEL`：默认 `gpt-5.5`，如果账号不可用，可以换成你有权限的模型。
+- `OPENAI_BASE_URL`：默认官方 OpenAI；也可以换成 OpenAI-compatible 网关。
+- `OPENAI_API_STYLE`：官方 Responses API 用 `responses`；大多数兼容网关用 `chat`。
 - `ALLOWED_ORIGIN`：如果前端部署在 GitHub Pages、后端部署在其他域名，可设置为 GitHub Pages 地址。
 
 如果 GitHub Pages 前端要连接独立后端，首次访问时可以带上：
@@ -51,23 +55,56 @@ https://cexufu.github.io/content_simulator/?api=https://your-backend.example.com
 
 这个后端地址会保存在当前浏览器本地。
 
-## 今天上线建议
+## 今天上线建议：国内可访问
 
-最快方式是把整个仓库部署成一个 Node Web Service，让同一个域名同时承载网页和 `/api/*` 后端。
+最快方式是把整个仓库部署成一个 Node 服务，让同一个域名同时承载网页和 `/api/*` 后端。
 
-Render 部署步骤：
+不建议把真实产品只放在 GitHub Pages，因为 GitHub Pages 不能运行后端，也不能安全保存 Key。
 
-1. 进入 Render，选择 `New Web Service`。
-2. 连接 GitHub 仓库 `cexufu/content_simulator`。
-3. 选择 `main` 分支。
-4. Build Command 使用 `npm install`。
-5. Start Command 使用 `npm start`。
-6. 添加环境变量：
-   - `OPENAI_API_KEY`：填你的真实 Key。
-   - `OPENAI_MODEL`：默认 `gpt-5.5`，如果账号无权限，换成你有权限的模型。
-7. 部署完成后，直接访问 Render 提供的域名。
+推荐路径：
 
-这个方式不需要 GitHub Pages，也不需要在前端暴露 Key。
+1. 买一台腾讯云或阿里云轻量服务器，优先选香港或新加坡节点。
+2. 安装 Node.js 18+。
+3. 拉取仓库：
+
+```bash
+git clone https://github.com/cexufu/content_simulator.git
+cd content_simulator
+```
+
+4. 创建 `.env`，填入：
+
+```bash
+OPENAI_API_KEY=你的真实Key
+OPENAI_MODEL=gpt-5.5
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_API_STYLE=responses
+PORT=10006
+```
+
+5. 启动：
+
+```bash
+npm install
+npm start
+```
+
+6. 访问：
+
+```text
+http://服务器IP:10006
+```
+
+如果服务器不能访问官方 OpenAI，可以换成 OpenAI-compatible 网关：
+
+```bash
+OPENAI_API_KEY=你的网关Key
+OPENAI_MODEL=你的模型名
+OPENAI_BASE_URL=https://你的网关域名/v1
+OPENAI_API_STYLE=chat
+```
+
+这样前端和后端仍然不用改代码。
 
 ## API
 

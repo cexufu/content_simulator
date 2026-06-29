@@ -7,6 +7,8 @@ loadEnv();
 const PORT = Number(process.env.PORT || 10006);
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.5";
+const OPENAI_BASE_URL = trimTrailingSlash(process.env.OPENAI_BASE_URL || "https://api.openai.com/v1");
+const OPENAI_API_STYLE = process.env.OPENAI_API_STYLE || "responses";
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "";
 const ROOT = __dirname;
 const BODY_LIMIT = 4 * 1024 * 1024;
@@ -33,7 +35,9 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, {
         ok: true,
         configured: Boolean(OPENAI_API_KEY),
-        model: OPENAI_MODEL
+        model: OPENAI_MODEL,
+        apiStyle: OPENAI_API_STYLE,
+        baseUrl: maskBaseUrl(OPENAI_BASE_URL)
       });
     }
 
@@ -187,7 +191,14 @@ async function reviseDraft(_req, res, payload) {
 }
 
 async function callOpenAI({ instructions, input }) {
-  const response = await fetch("https://api.openai.com/v1/responses", {
+  if (OPENAI_API_STYLE === "chat") {
+    return callChatCompletions({ instructions, input });
+  }
+  return callResponses({ instructions, input });
+}
+
+async function callResponses({ instructions, input }) {
+  const response = await fetch(`${OPENAI_BASE_URL}/responses`, {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${OPENAI_API_KEY}`,
@@ -206,6 +217,31 @@ async function callOpenAI({ instructions, input }) {
     throw new Error(message);
   }
   return extractOutputText(data);
+}
+
+async function callChatCompletions({ instructions, input }) {
+  const response = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${OPENAI_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: OPENAI_MODEL,
+      messages: [
+        { role: "system", content: instructions },
+        { role: "user", content: input }
+      ],
+      stream: false
+    })
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message = data.error?.message || `OpenAI-compatible request failed: ${response.status}`;
+    throw new Error(message);
+  }
+  return data.choices?.[0]?.message?.content || "";
 }
 
 function extractOutputText(data) {
@@ -329,6 +365,19 @@ function profileShape() {
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
+}
+
+function trimTrailingSlash(value) {
+  return String(value).replace(/\/+$/, "");
+}
+
+function maskBaseUrl(value) {
+  try {
+    const url = new URL(value);
+    return `${url.origin}${url.pathname}`;
+  } catch (_error) {
+    return "custom";
+  }
 }
 
 function handleCors(req, res) {
