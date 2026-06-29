@@ -60,7 +60,6 @@ function cacheElements() {
     "contentFeatures",
     "textFeatures",
     "speechPatterns",
-    "videoFeatures",
     "trafficFeatures",
     "rulesInput",
     "saveRulesBtn",
@@ -399,7 +398,6 @@ function analyzeSources(sources, rules) {
   const text = (readableSources.length ? readableSources : sources)
     .map((source) => `${source.title}\n${isLimitedSource(source) ? "" : source.body || ""}\n${source.url || ""}`)
     .join("\n");
-  const hasDouyin = sources.some((source) => source.type === "douyin" || /抖音|视频|口播|账号|播放|点赞/.test(source.body || ""));
   const keywordCounts = extractKeywords(text);
   const domains = scoreDomains(text);
   const tones = scoreTones(text);
@@ -413,8 +411,7 @@ function analyzeSources(sources, rules) {
     contentFeatures: buildContentFeatures(text, domains),
     textFeatures: buildTextFeatures(text, keywordCounts),
     speechPatterns: buildSpeechPatterns(text),
-    videoFeatures: buildVideoFeatures(text, hasDouyin),
-    trafficFeatures: buildTrafficFeatures(hasDouyin),
+    trafficFeatures: buildTrafficFeatures(text),
     rules,
     updatedAt: new Date().toISOString()
   };
@@ -569,27 +566,11 @@ function extractRepeatedPhrase(lines) {
   return repeated ? `疑似口头禅/固定表达：「${repeated[0]}」` : "口头禅和固定表达待更多样本确认";
 }
 
-function buildVideoFeatures(text, hasDouyin) {
-  if (!hasDouyin) {
-    return ["未读取到视频账号数据", "可补充抖音主页或口播稿", "后续接入后分析开头、字幕、时长、封面和互动"];
-  }
+function buildTrafficFeatures(text) {
   return [
-    "优先学习高互动作品的标题和文案",
-    "重点分析开头 3 秒钩子",
-    "记录口播节奏、字幕密度和结尾引导",
-    "接入后可比较高流量与低流量内容差异"
-  ];
-}
-
-function buildTrafficFeatures(hasDouyin) {
-  if (!hasDouyin) {
-    return ["当前以文本表达为主", "传播线索需要更多账号数据", "可先按标题、关键词和结尾引导做轻量判断"];
-  }
-  return [
-    "按播放、点赞、评论、收藏、转发排序抽样",
-    "高流量内容用于提炼有效钩子",
-    "低流量内容用于识别需要避开的表达",
-    "评论区可作为后续选题来源"
+    /标题|开头|问题|为什么/.test(text) ? "开头和标题可作为传播抓手" : "传播抓手待更多样本确认",
+    /评论|留言|你怎么看|欢迎/.test(text) ? "有互动引导倾向" : "互动引导暂不明显",
+    /热点|最近|今天|当下|趋势/.test(text) ? "会借近期议题进入" : "近期议题借势不明显"
   ];
 }
 
@@ -606,7 +587,6 @@ function renderProfile() {
   renderFeatureList(els.contentFeatures, profile.contentFeatures);
   renderFeatureList(els.textFeatures, profile.textFeatures);
   renderFeatureList(els.speechPatterns, profile.speechPatterns || buildSpeechPatterns(""));
-  renderFeatureList(els.videoFeatures, profile.videoFeatures);
   renderFeatureList(els.trafficFeatures, profile.trafficFeatures);
   renderRules();
   renderSummary(profile);
@@ -621,7 +601,6 @@ function renderEmptyProfile() {
   renderFeatureList(els.contentFeatures, ["没有读取到可分析正文"]);
   renderFeatureList(els.textFeatures, ["请粘贴文章正文、口播稿或上传 txt / md / html"]);
   renderFeatureList(els.speechPatterns, ["补充正文后分析开场、结尾、转场和口头禅"]);
-  renderFeatureList(els.videoFeatures, ["抖音主页目前需要补充作品标题、文案和互动数据"]);
   renderFeatureList(els.trafficFeatures, ["动态网页需要公开正文或专门连接器"]);
   renderRules();
   els.profileSummary.innerHTML = `

@@ -442,8 +442,9 @@ async function analyze(_req, res, payload) {
     instructions: [
       "你是 Content Simulator 的文风分析后台。",
       "你需要阅读用户提供的原稿、文件摘要或账号链接记录，输出可被前端渲染的 JSON。",
-      "请区分文本特征、视频特征和传播线索。若抖音链接尚未被真实爬取，请明确写出需要后端连接器补充。",
-      "请专门分析话术习惯：开场方式、结尾方式、自我介绍、转场/过渡句、口头禅或固定表达。",
+      "请区分文本特征、节点话术和传播线索。若抖音链接尚未被真实爬取，不要编造作品内容。",
+      "请专门分析节点话术：开场方式、结尾方式、自我介绍、转场/过渡句、口头禅或固定表达。",
+      "暂不分析拍摄、字幕、时长、封面等视频线索。",
       "只输出 JSON，不要输出 Markdown。"
     ].join("\n"),
     input: JSON.stringify({
@@ -793,7 +794,6 @@ function normalizeProfile(profile, rules = []) {
     contentFeatures: normalizeList(profile.contentFeatures, ["主题重心待继续学习"]),
     textFeatures: normalizeList(profile.textFeatures, ["文本节奏待继续学习"]),
     speechPatterns: normalizeList(profile.speechPatterns, ["开场、结尾、转场和口头禅待继续学习"]),
-    videoFeatures: normalizeList(profile.videoFeatures, ["视频账号数据待后端连接器补充"]),
     trafficFeatures: normalizeList(profile.trafficFeatures, ["传播线索待更多样本补充"]),
     rules: normalizeRules(profile.rules || rules),
     updatedAt: new Date().toISOString()
@@ -857,7 +857,6 @@ function profileShape() {
     contentFeatures: ["内容特征"],
     textFeatures: ["文本风格"],
     speechPatterns: ["开场方式", "结尾方式", "自我介绍", "转场/过渡句", "口头禅或固定表达"],
-    videoFeatures: ["视频特征"],
     trafficFeatures: ["传播线索"],
     rules: ["额外规则"]
   };
