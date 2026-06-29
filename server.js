@@ -1,6 +1,7 @@
 const fs = require("fs");
 const http = require("http");
 const path = require("path");
+const zlib = require("zlib");
 
 loadEnv();
 
@@ -15,7 +16,7 @@ const MODEL_THINKING = process.env.MODEL_THINKING || "enabled";
 const MODEL_REASONING_EFFORT = process.env.MODEL_REASONING_EFFORT || "high";
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "";
 const ROOT = __dirname;
-const BODY_LIMIT = 4 * 1024 * 1024;
+const BODY_LIMIT = 12 * 1024 * 1024;
 const PUBLIC_FILES = new Set(["/index.html", "/app.js", "/styles.css"]);
 
 const MIME_TYPES = {
@@ -68,6 +69,7 @@ async function handleApi(req, res, pathname) {
 
   const payload = await readJsonBody(req);
   if (pathname === "/api/resolve-url") return resolveUrl(req, res, payload);
+  if (pathname === "/api/parse-file") return parseFile(req, res, payload);
 
   if (!MODEL_API_KEY) {
     return sendJson(res, 503, { error: "MODEL_API_KEY or DEEPSEEK_API_KEY is not configured" });
@@ -125,6 +127,159 @@ async function resolveUrl(_req, res, payload) {
     }
     return sendJson(res, 200, buildLimitedWebSource(parsedUrl.href, "网页链接", `当前后端没有读取到正文。错误：${error.message}`));
   }
+}
+
+async function parseFile(_req, res, payload) {
+  const name = String(payload.name || "未命名文件").slice(0, 180);
+  const extension = String(payload.extension || path.extname(name).replace(".", "") || "").toLowerCase();
+  const base64 = String(payload.data || "");
+  if (!base64) {
+    return sendJson(res, 400, { error: "没有收到文件内容" });
+  }
+
+  let buffer;
+  try {
+    buffer = Buffer.from(base64, "base64");
+  } catch (_error) {
+    return sendJson(res, 400, { error: "文件内容格式不正确" });
+  }
+
+  try {
+    if (extension === "docx") {
+      const body = extractDocxText(buffer);
+      return sendJson(res, 200, {
+        type: "docx",
+        title: name,
+        body: body.slice(0, 24000),
+        status: `已解析 · ${body.length}字`,
+        limited: false
+      });
+    }
+
+    if (["html", "htm"].includes(extension)) {
+      const html = decodeBufferText(buffer);
+      const page = extractHtmlSummary(html);
+      const body = page.text.trim();
+      if (!body) throw new Error("HTML 中没有读取到正文");
+      return sendJson(res, 200, {
+        type: extension,
+        title: name,
+        body: body.slice(0, 24000),
+        status: `已读取 · ${body.length}字`,
+        limited: false
+      });
+    }
+
+    if (["txt", "md"].includes(extension)) {
+      const body = decodeBufferText(buffer).trim();
+      if (!body) throw new Error("文件为空");
+      return sendJson(res, 200, {
+        type: extension,
+        title: name,
+        body: body.slice(0, 24000),
+        status: `已读取 · ${body.length}字`,
+        limited: false
+      });
+    }
+
+    return sendJson(res, 200, {
+      type: extension || "file",
+      title: name,
+      body: "文件已记录，但当前只支持自动解析 docx、txt、md、html。PDF 和旧版 doc 请先转成 docx 或粘贴正文。",
+      status: "格式暂不支持，需补充正文",
+      limited: true
+    });
+  } catch (error) {
+    return sendJson(res, 200, {
+      type: extension || "file",
+      title: name,
+      body: `文件已记录，但没有解析出正文。错误：${error.message}`,
+      status: "解析失败，需粘贴正文",
+      limited: true
+    });
+  }
+}
+
+function extractDocxText(buffer) {
+  const entries = unzipEntries(buffer);
+  const xmlNames = Object.keys(entries).filter((name) => {
+    return (
+      name === "word/document.xml" ||
+      /^word\/(header|footer)\d+\.xml$/.test(name) ||
+      ["word/footnotes.xml", "word/endnotes.xml", "word/comments.xml"].includes(name)
+    );
+  });
+  const text = xmlNames
+    .map((name) => extractDocxXmlText(entries[name].toString("utf8")))
+    .filter(Boolean)
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  if (!text) throw new Error("DOCX 中没有读取到正文");
+  return text;
+}
+
+function unzipEntries(buffer) {
+  const eocdOffset = findZipEndOfCentralDirectory(buffer);
+  if (eocdOffset < 0) throw new Error("不是有效的 DOCX 文件");
+
+  const entryCount = buffer.readUInt16LE(eocdOffset + 10);
+  const centralOffset = buffer.readUInt32LE(eocdOffset + 16);
+  const entries = {};
+  let offset = centralOffset;
+
+  for (let index = 0; index < entryCount; index += 1) {
+    if (buffer.readUInt32LE(offset) !== 0x02014b50) break;
+    const method = buffer.readUInt16LE(offset + 10);
+    const compressedSize = buffer.readUInt32LE(offset + 20);
+    const fileNameLength = buffer.readUInt16LE(offset + 28);
+    const extraLength = buffer.readUInt16LE(offset + 30);
+    const commentLength = buffer.readUInt16LE(offset + 32);
+    const localHeaderOffset = buffer.readUInt32LE(offset + 42);
+    const name = buffer.toString("utf8", offset + 46, offset + 46 + fileNameLength);
+
+    const localNameLength = buffer.readUInt16LE(localHeaderOffset + 26);
+    const localExtraLength = buffer.readUInt16LE(localHeaderOffset + 28);
+    const dataStart = localHeaderOffset + 30 + localNameLength + localExtraLength;
+    const compressed = buffer.subarray(dataStart, dataStart + compressedSize);
+    if (method === 0) {
+      entries[name] = compressed;
+    } else if (method === 8) {
+      entries[name] = zlib.inflateRawSync(compressed);
+    }
+
+    offset += 46 + fileNameLength + extraLength + commentLength;
+  }
+
+  return entries;
+}
+
+function findZipEndOfCentralDirectory(buffer) {
+  const minOffset = Math.max(0, buffer.length - 65557);
+  for (let offset = buffer.length - 22; offset >= minOffset; offset -= 1) {
+    if (buffer.readUInt32LE(offset) === 0x06054b50) return offset;
+  }
+  return -1;
+}
+
+function extractDocxXmlText(xml) {
+  return xml
+    .replace(/<w:tab\s*\/>/g, "\t")
+    .replace(/<w:br\s*\/>/g, "\n")
+    .split(/<\/w:p>/)
+    .map((paragraph) => {
+      const runs = [...paragraph.matchAll(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g)].map((match) => decodeHtml(match[1]));
+      return runs.join("");
+    })
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+function decodeBufferText(buffer) {
+  const head = new TextDecoder("utf-8", { fatal: false }).decode(buffer.subarray(0, 4096));
+  const charset = detectCharset("", head);
+  return new TextDecoder(charset, { fatal: false }).decode(buffer);
 }
 
 async function fetchPublicPage(url) {

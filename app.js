@@ -223,22 +223,55 @@ async function handleFiles(event) {
 async function addFiles(files) {
   for (const file of files) {
     const extension = file.name.split(".").pop().toLowerCase();
-    const readable = ["txt", "md", "html", "htm"].includes(extension);
     const source = {
       id: makeId(),
       type: extension || "file",
       title: file.name,
       body: "",
-      status: readable ? "已读取" : "已记录，待后端解析",
+      status: "解析中",
       size: file.size
     };
-    if (readable) {
-      source.body = await file.text();
-    }
     state.sources.push(source);
+    saveState();
+    renderSources();
+    try {
+      const result = await parseUploadedFile(file, extension);
+      Object.assign(source, {
+        type: result.type || extension || "file",
+        title: result.title || file.name,
+        body: result.body || "",
+        status: result.status || "已读取",
+        limited: Boolean(result.limited)
+      });
+      setApiStatus(source.limited ? "文件需补充" : "文件已读取", source.limited ? "offline" : "online");
+    } catch (error) {
+      console.warn(error);
+      Object.assign(source, fallbackFileSource(file, extension, error));
+      setApiStatus("文件解析失败", "offline");
+    }
+    saveState();
+    renderSources();
   }
-  saveState();
-  renderSources();
+}
+
+async function parseUploadedFile(file, extension) {
+  const data = await fileToBase64(file);
+  return postApi("/api/parse-file", {
+    name: file.name,
+    extension,
+    type: file.type,
+    data
+  });
+}
+
+function fallbackFileSource(file, extension, error) {
+  return {
+    type: extension || "file",
+    title: file.name,
+    body: `文件已记录，但没有解析出正文。请重新上传 docx、txt、md、html，或直接粘贴正文。错误：${error.message}`,
+    status: "解析失败，需粘贴正文",
+    limited: true
+  };
 }
 
 async function addUrlSource() {
@@ -902,6 +935,18 @@ function formatSize(size) {
 
 function makeId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || "");
+      resolve(result.includes(",") ? result.split(",").pop() : result);
+    };
+    reader.onerror = () => reject(reader.error || new Error("读取文件失败"));
+    reader.readAsDataURL(file);
+  });
 }
 
 function escapeHtml(value) {
