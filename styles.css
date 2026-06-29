@@ -620,6 +620,36 @@ input:focus {
   white-space: pre-wrap;
 }
 
+.thinking-box {
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--blue-soft);
+}
+
+.thinking-box[hidden] {
+  display: none;
+}
+
+.thinking-box summary {
+  cursor: pointer;
+  padding: 10px 12px;
+  color: var(--blue);
+  font-weight: 700;
+}
+
+.thinking-box pre {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  padding: 0 12px 12px;
+  color: var(--muted);
+  white-space: pre-wrap;
+  line-height: 1.65;
+  font-family: inherit;
+  font-size: 13px;
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;

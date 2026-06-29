@@ -6,11 +6,13 @@ loadEnv();
 
 const PORT = Number(process.env.PORT || 10006);
 const MODEL_API_KEY = process.env.MODEL_API_KEY || process.env.DEEPSEEK_API_KEY || process.env.OPENAI_API_KEY || "";
-const MODEL_NAME = process.env.MODEL_NAME || process.env.DEEPSEEK_MODEL || process.env.OPENAI_MODEL || "deepseek-v4-flash";
+const MODEL_NAME = process.env.MODEL_NAME || process.env.DEEPSEEK_MODEL || process.env.OPENAI_MODEL || "deepseek-v4-pro";
 const MODEL_BASE_URL = trimTrailingSlash(
   process.env.MODEL_BASE_URL || process.env.DEEPSEEK_BASE_URL || process.env.OPENAI_BASE_URL || "https://api.deepseek.com"
 );
 const MODEL_API_STYLE = process.env.MODEL_API_STYLE || process.env.OPENAI_API_STYLE || "chat";
+const MODEL_THINKING = process.env.MODEL_THINKING || "enabled";
+const MODEL_REASONING_EFFORT = process.env.MODEL_REASONING_EFFORT || "high";
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "";
 const ROOT = __dirname;
 const BODY_LIMIT = 4 * 1024 * 1024;
@@ -39,6 +41,7 @@ const server = http.createServer(async (req, res) => {
         configured: Boolean(MODEL_API_KEY),
         model: MODEL_NAME,
         apiStyle: MODEL_API_STYLE,
+        thinking: MODEL_THINKING,
         baseUrl: maskBaseUrl(MODEL_BASE_URL)
       });
     }
@@ -71,6 +74,8 @@ async function handleApi(req, res, pathname) {
   if (pathname === "/api/refine-profile") return refineProfile(req, res, payload);
   if (pathname === "/api/generate") return generateDraft(req, res, payload);
   if (pathname === "/api/revise") return reviseDraft(req, res, payload);
+  if (pathname === "/api/generate-stream") return generateDraftStream(req, res, payload);
+  if (pathname === "/api/revise-stream") return reviseDraftStream(req, res, payload);
   return sendJson(res, 404, { error: "API not found" });
 }
 
@@ -161,6 +166,38 @@ async function generateDraft(_req, res, payload) {
   });
 }
 
+async function generateDraftStream(_req, res, payload) {
+  const profile = normalizeProfile(payload.profile || {}, payload.rules || []);
+  const rules = normalizeRules(payload.rules || profile.rules || []);
+  const task = String(payload.task || "").slice(0, 4000);
+  const type = String(payload.type || "内容").slice(0, 100);
+  sendSseHeaders(res);
+  try {
+    await callChatCompletionsStream({
+      instructions: [
+        "你是 Content Simulator 的成稿后台。",
+        "请基于已确认的文风画像和额外规则写初稿。",
+        "文案要像内容创作者本人继续写，不要解释你是 AI。",
+        "直接输出完整稿件正文，不要输出 JSON，不要输出 Markdown 代码块。"
+      ].join("\n"),
+      input: JSON.stringify({
+        task: "生成初稿",
+        contentType: type,
+        userTask: task,
+        profile,
+        rules
+      }),
+      onThinking: (text) => writeSse(res, "thinking", { text }),
+      onContent: (text) => writeSse(res, "content", { text })
+    });
+    writeSse(res, "done", { ok: true });
+  } catch (error) {
+    writeSse(res, "error", { error: error.message || "生成失败" });
+  } finally {
+    res.end();
+  }
+}
+
 async function reviseDraft(_req, res, payload) {
   const profile = normalizeProfile(payload.profile || {}, payload.rules || []);
   const rules = normalizeRules(payload.rules || profile.rules || []);
@@ -190,6 +227,37 @@ async function reviseDraft(_req, res, payload) {
     draft: String(parsed.draft || text).trim(),
     reply: parsed.reply || "已按你的意见修改。"
   });
+}
+
+async function reviseDraftStream(_req, res, payload) {
+  const profile = normalizeProfile(payload.profile || {}, payload.rules || []);
+  const rules = normalizeRules(payload.rules || profile.rules || []);
+  const draft = String(payload.draft || "").slice(0, 12000);
+  const instruction = String(payload.instruction || "").slice(0, 2000);
+  sendSseHeaders(res);
+  try {
+    await callChatCompletionsStream({
+      instructions: [
+        "你是 Content Simulator 的改稿后台。",
+        "请根据用户新意见修改当前稿件，保留已确认文风。",
+        "直接输出修改后的完整稿件正文，不要输出 JSON，不要输出 Markdown 代码块。"
+      ].join("\n"),
+      input: JSON.stringify({
+        task: "修改稿件",
+        currentDraft: draft,
+        instruction,
+        profile,
+        rules
+      }),
+      onThinking: (text) => writeSse(res, "thinking", { text }),
+      onContent: (text) => writeSse(res, "content", { text })
+    });
+    writeSse(res, "done", { ok: true });
+  } catch (error) {
+    writeSse(res, "error", { error: error.message || "改稿失败" });
+  } finally {
+    res.end();
+  }
 }
 
 async function callOpenAI({ instructions, input }) {
@@ -234,6 +302,7 @@ async function callChatCompletions({ instructions, input }) {
         { role: "system", content: instructions },
         { role: "user", content: input }
       ],
+      ...buildThinkingOptions(),
       stream: false
     })
   });
@@ -244,6 +313,65 @@ async function callChatCompletions({ instructions, input }) {
     throw new Error(message);
   }
   return data.choices?.[0]?.message?.content || "";
+}
+
+async function callChatCompletionsStream({ instructions, input, onThinking, onContent }) {
+  if (MODEL_API_STYLE !== "chat") {
+    throw new Error("Streaming currently requires MODEL_API_STYLE=chat");
+  }
+  const response = await fetch(`${MODEL_BASE_URL}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${MODEL_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: MODEL_NAME,
+      messages: [
+        { role: "system", content: instructions },
+        { role: "user", content: input }
+      ],
+      ...buildThinkingOptions(),
+      stream: true
+    })
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    const message = data.error?.message || `Streaming request failed: ${response.status}`;
+    throw new Error(message);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() || "";
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data:")) continue;
+      const payload = trimmed.slice(5).trim();
+      if (!payload || payload === "[DONE]") continue;
+      const data = JSON.parse(payload);
+      const delta = data.choices?.[0]?.delta || {};
+      if (delta.reasoning_content) onThinking(delta.reasoning_content);
+      if (delta.content) onContent(delta.content);
+    }
+  }
+}
+
+function buildThinkingOptions() {
+  if (!MODEL_THINKING || MODEL_THINKING === "off") return {};
+  return {
+    thinking: {
+      type: MODEL_THINKING,
+      reasoning_effort: MODEL_REASONING_EFFORT
+    }
+  };
 }
 
 function extractOutputText(data) {
@@ -453,6 +581,21 @@ function sendJson(res, status, payload) {
     "Cache-Control": "no-store"
   });
   res.end(JSON.stringify(payload));
+}
+
+function sendSseHeaders(res) {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-store, no-transform",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no"
+  });
+  res.write(": connected\n\n");
+}
+
+function writeSse(res, event, payload) {
+  res.write(`event: ${event}\n`);
+  res.write(`data: ${JSON.stringify(payload)}\n\n`);
 }
 
 function loadEnv() {

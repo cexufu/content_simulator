@@ -34,17 +34,21 @@ npm start
 
 ```bash
 DEEPSEEK_API_KEY=sk-your-deepseek-api-key
-MODEL_NAME=deepseek-v4-flash
+MODEL_NAME=deepseek-v4-pro
 MODEL_BASE_URL=https://api.deepseek.com
 MODEL_API_STYLE=chat
+MODEL_THINKING=enabled
+MODEL_REASONING_EFFORT=high
 PORT=10006
 ALLOWED_ORIGIN=
 ```
 
 - `DEEPSEEK_API_KEY`：只放在后端环境变量里，不要写进前端。
-- `MODEL_NAME`：默认 `deepseek-v4-flash`，可换成账号可用的 DeepSeek 模型。
+- `MODEL_NAME`：默认 `deepseek-v4-pro`，用于 thinking 模式。
 - `MODEL_BASE_URL`：默认 `https://api.deepseek.com`。
 - `MODEL_API_STYLE`：DeepSeek 使用 `chat`。
+- `MODEL_THINKING`：默认 `enabled`，如需关闭可设为 `off`。
+- `MODEL_REASONING_EFFORT`：默认 `high`。
 - `ALLOWED_ORIGIN`：如果前端部署在 GitHub Pages、后端部署在其他域名，可设置为 GitHub Pages 地址。
 
 如果 GitHub Pages 前端要连接独立后端，首次访问时可以带上：
@@ -76,9 +80,11 @@ cd content_simulator
 
 ```bash
 DEEPSEEK_API_KEY=你的真实Key
-MODEL_NAME=deepseek-v4-flash
+MODEL_NAME=deepseek-v4-pro
 MODEL_BASE_URL=https://api.deepseek.com
 MODEL_API_STYLE=chat
+MODEL_THINKING=enabled
+MODEL_REASONING_EFFORT=high
 PORT=10006
 ```
 
@@ -112,6 +118,8 @@ MODEL_API_STYLE=chat
 - `POST /api/refine-profile`：根据用户反馈校准画像。
 - `POST /api/generate`：根据画像和任务生成初稿。
 - `POST /api/revise`：根据修改意见改稿。
+- `POST /api/generate-stream`：流式生成初稿，返回正文和 thinking。
+- `POST /api/revise-stream`：流式改稿，返回正文和 thinking。
 
 ## 当前边界
 

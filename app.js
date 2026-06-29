@@ -12,6 +12,7 @@ const state = {
   profile: null,
   rules: [],
   draft: "",
+  thinking: "",
   profileChat: [],
   deliverChat: []
 };
@@ -72,6 +73,8 @@ function cacheElements() {
     "generateBtn",
     "draftStatus",
     "draftOutput",
+    "thinkingWrap",
+    "thinkingOutput",
     "copyBtn",
     "downloadTxtBtn",
     "downloadMdBtn",
@@ -100,6 +103,7 @@ function bindEvents() {
       profile: null,
       rules: [],
       draft: "",
+      thinking: "",
       profileChat: [],
       deliverChat: []
     });
@@ -647,18 +651,30 @@ async function generateDraft() {
   await withBusy(els.generateBtn, "正在生成", async () => {
     try {
       setApiStatus("AI 生成中", "busy");
-      const result = await postApi("/api/generate", {
+      state.draft = "";
+      state.thinking = "";
+      renderDraft();
+      await streamApi("/api/generate-stream", {
         type,
         task,
         profile: state.profile,
         rules: state.rules
+      }, {
+        onThinking: (text) => {
+          state.thinking += text;
+          renderDraft();
+        },
+        onContent: (text) => {
+          state.draft += text;
+          renderDraft();
+        }
       });
-      state.draft = result.draft || "";
-      state.deliverChat = [{ role: "ai", text: result.reply || "初稿已生成。可以继续说要改哪里。" }];
+      state.deliverChat = [{ role: "ai", text: "初稿已生成。可以继续说要改哪里。" }];
       setApiStatus("AI 后台", "online");
     } catch (error) {
       console.warn(error);
       state.draft = composeDraft(type, task, state.profile, state.rules);
+      state.thinking = "";
       state.deliverChat = [{ role: "ai", text: "初稿已生成。可以继续说要改哪里。" }];
       setApiStatus("本地模式", "offline");
     }
@@ -678,24 +694,37 @@ function composeDraft(type, task, profile, rules) {
 async function sendDeliverMessage() {
   const message = els.deliverChatInput.value.trim();
   if (!message || !state.draft) return;
+  const originalDraft = state.draft;
   state.deliverChat.push({ role: "user", text: message });
   els.deliverChatInput.value = "";
   renderChats();
 
   try {
     setApiStatus("AI 改稿中", "busy");
-    const result = await postApi("/api/revise", {
-      draft: state.draft,
+    state.draft = "";
+    state.thinking = "";
+    renderDraft();
+    await streamApi("/api/revise-stream", {
+      draft: originalDraft,
       instruction: message,
       profile: state.profile,
       rules: state.rules
+    }, {
+      onThinking: (text) => {
+        state.thinking += text;
+        renderDraft();
+      },
+      onContent: (text) => {
+        state.draft += text;
+        renderDraft();
+      }
     });
-    state.draft = result.draft || state.draft;
-    state.deliverChat.push({ role: "ai", text: result.reply || "已按你的意见修改。" });
+    if (!state.draft.trim()) state.draft = originalDraft;
+    state.deliverChat.push({ role: "ai", text: "已按你的意见修改。" });
     setApiStatus("AI 后台", "online");
   } catch (error) {
     console.warn(error);
-    state.draft = reviseDraft(state.draft, message);
+    state.draft = reviseDraft(originalDraft, message);
     state.deliverChat.push({ role: "ai", text: "已按你的意见修改。你可以继续调整语气、结构或长度。" });
     setApiStatus("本地模式", "offline");
   }
@@ -727,6 +756,8 @@ function reviseDraft(draft, instruction) {
 function renderDraft() {
   els.draftStatus.textContent = state.draft ? "已生成" : "等待生成";
   els.draftOutput.textContent = state.draft || "初稿会显示在这里。";
+  els.thinkingOutput.textContent = state.thinking || "";
+  els.thinkingWrap.hidden = !state.thinking;
 }
 
 async function copyDraft() {
@@ -840,6 +871,49 @@ async function postApi(path, payload) {
     throw new Error(data.error || `API request failed: ${response.status}`);
   }
   return data;
+}
+
+async function streamApi(path, payload, handlers) {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+  if (!response.ok || !response.body) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || `Stream request failed: ${response.status}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split(/\n\n/);
+    buffer = parts.pop() || "";
+    for (const part of parts) {
+      handleSsePart(part, handlers);
+    }
+  }
+  if (buffer.trim()) handleSsePart(buffer, handlers);
+}
+
+function handleSsePart(part, handlers) {
+  let event = "message";
+  const dataLines = [];
+  for (const line of part.split(/\r?\n/)) {
+    if (line.startsWith("event:")) event = line.slice(6).trim();
+    if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+  }
+  if (!dataLines.length) return;
+  const data = JSON.parse(dataLines.join("\n"));
+  if (event === "thinking") handlers.onThinking?.(data.text || "");
+  if (event === "content") handlers.onContent?.(data.text || "");
+  if (event === "error") throw new Error(data.error || "Stream error");
 }
 
 async function withBusy(button, label, task) {
