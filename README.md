@@ -43,6 +43,14 @@ ALLOWED_ORIGIN=
 - `OPENAI_MODEL`：默认 `gpt-5.5`，如果账号不可用，可以换成你有权限的模型。
 - `ALLOWED_ORIGIN`：如果前端部署在 GitHub Pages、后端部署在其他域名，可设置为 GitHub Pages 地址。
 
+如果 GitHub Pages 前端要连接独立后端，首次访问时可以带上：
+
+```text
+https://cexufu.github.io/content_simulator/?api=https://your-backend.example.com
+```
+
+这个后端地址会保存在当前浏览器本地。
+
 ## API
 
 - `POST /api/analyze`：分析原稿，返回文风画像。

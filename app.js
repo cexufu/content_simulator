@@ -1,5 +1,9 @@
 const STORAGE_KEY = "content-simulator-state-v1";
-const API_BASE = (window.CONTENT_SIMULATOR_API_BASE || "").replace(/\/$/, "");
+const apiBaseFromUrl = new URLSearchParams(window.location.search).get("api");
+if (apiBaseFromUrl) {
+  localStorage.setItem("content-simulator-api-base", apiBaseFromUrl);
+}
+const API_BASE = (window.CONTENT_SIMULATOR_API_BASE || localStorage.getItem("content-simulator-api-base") || "").replace(/\/$/, "");
 
 const state = {
   accepted: false,
