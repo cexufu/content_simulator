@@ -443,6 +443,7 @@ async function analyze(_req, res, payload) {
       "你是 Content Simulator 的文风分析后台。",
       "你需要阅读用户提供的原稿、文件摘要或账号链接记录，输出可被前端渲染的 JSON。",
       "请区分文本特征、视频特征和传播线索。若抖音链接尚未被真实爬取，请明确写出需要后端连接器补充。",
+      "请专门分析话术习惯：开场方式、结尾方式、自我介绍、转场/过渡句、口头禅或固定表达。",
       "只输出 JSON，不要输出 Markdown。"
     ].join("\n"),
     input: JSON.stringify({
@@ -465,6 +466,7 @@ async function refineProfile(_req, res, payload) {
     instructions: [
       "你是 Content Simulator 的文风校准后台。",
       "用户会指出画像哪里不像自己。请更新画像，并给一句简短回复。",
+      "如果用户反馈涉及开场、结尾、自我介绍、转场或口头禅，请更新 speechPatterns。",
       "只输出 JSON，不要输出 Markdown。"
     ].join("\n"),
     input: JSON.stringify({
@@ -499,6 +501,7 @@ async function generateDraft(_req, res, payload) {
     instructions: [
       "你是 Content Simulator 的成稿后台。",
       "请基于已确认的文风画像和额外规则写初稿。",
+      "如画像中有 speechPatterns，请在合适位置沿用其开场、过渡、收尾、自我介绍或固定表达。",
       "文案要像内容创作者本人继续写，不要解释你是 AI。",
       "只输出 JSON，不要输出 Markdown。"
     ].join("\n"),
@@ -533,6 +536,7 @@ async function generateDraftStream(_req, res, payload) {
       instructions: [
         "你是 Content Simulator 的成稿后台。",
         "请基于已确认的文风画像和额外规则写初稿。",
+        "如画像中有 speechPatterns，请在合适位置沿用其开场、过渡、收尾、自我介绍或固定表达。",
         "文案要像内容创作者本人继续写，不要解释你是 AI。",
         "直接输出完整稿件正文，不要输出 JSON，不要输出 Markdown 代码块。"
       ].join("\n"),
@@ -563,6 +567,7 @@ async function reviseDraft(_req, res, payload) {
     instructions: [
       "你是 Content Simulator 的改稿后台。",
       "请根据用户新意见修改当前稿件，保留已确认文风。",
+      "保留或按用户要求调整 speechPatterns 中的开场、过渡、收尾和口头禅。",
       "只输出 JSON，不要输出 Markdown。"
     ].join("\n"),
     input: JSON.stringify({
@@ -596,6 +601,7 @@ async function reviseDraftStream(_req, res, payload) {
       instructions: [
         "你是 Content Simulator 的改稿后台。",
         "请根据用户新意见修改当前稿件，保留已确认文风。",
+        "保留或按用户要求调整 speechPatterns 中的开场、过渡、收尾和口头禅。",
         "直接输出修改后的完整稿件正文，不要输出 JSON，不要输出 Markdown 代码块。"
       ].join("\n"),
       input: JSON.stringify({
@@ -786,6 +792,7 @@ function normalizeProfile(profile, rules = []) {
     keywords: normalizeKeywords(profile.keywords),
     contentFeatures: normalizeList(profile.contentFeatures, ["主题重心待继续学习"]),
     textFeatures: normalizeList(profile.textFeatures, ["文本节奏待继续学习"]),
+    speechPatterns: normalizeList(profile.speechPatterns, ["开场、结尾、转场和口头禅待继续学习"]),
     videoFeatures: normalizeList(profile.videoFeatures, ["视频账号数据待后端连接器补充"]),
     trafficFeatures: normalizeList(profile.trafficFeatures, ["传播线索待更多样本补充"]),
     rules: normalizeRules(profile.rules || rules),
@@ -849,6 +856,7 @@ function profileShape() {
     keywords: [{ word: "关键词", count: 3 }],
     contentFeatures: ["内容特征"],
     textFeatures: ["文本风格"],
+    speechPatterns: ["开场方式", "结尾方式", "自我介绍", "转场/过渡句", "口头禅或固定表达"],
     videoFeatures: ["视频特征"],
     trafficFeatures: ["传播线索"],
     rules: ["额外规则"]

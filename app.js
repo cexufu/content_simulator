@@ -59,6 +59,7 @@ function cacheElements() {
     "keywordChips",
     "contentFeatures",
     "textFeatures",
+    "speechPatterns",
     "videoFeatures",
     "trafficFeatures",
     "rulesInput",
@@ -411,6 +412,7 @@ function analyzeSources(sources, rules) {
     keywords: keywordCounts,
     contentFeatures: buildContentFeatures(text, domains),
     textFeatures: buildTextFeatures(text, keywordCounts),
+    speechPatterns: buildSpeechPatterns(text),
     videoFeatures: buildVideoFeatures(text, hasDouyin),
     trafficFeatures: buildTrafficFeatures(hasDouyin),
     rules,
@@ -526,6 +528,47 @@ function buildTextFeatures(text, keywords) {
   ];
 }
 
+function buildSpeechPatterns(text) {
+  const lines = text
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const firstLines = lines.slice(0, 8).join(" ");
+  const lastLines = lines.slice(-8).join(" ");
+  const opening = /大家好|我是|今天|最近|先说|先讲|很多人|你有没有|有没有发现/.test(firstLines)
+    ? "开场有固定进入方式，适合保留原有起手句"
+    : "开场方式待补充，可继续学习原稿开头";
+  const intro = /我是|这里是|关注我|我的名字|我叫/.test(text)
+    ? "存在自我介绍或账号身份提示"
+    : "暂未识别明显自我介绍";
+  const transition = /所以|但是|不过|然后|接下来|换句话说|说白了|也就是说|重点是|问题是/.test(text)
+    ? "常用过渡词较明显，可用于承接观点"
+    : "转场/过渡表达待继续学习";
+  const ending = /最后|总结|总之|欢迎|评论区|关注|下期|你怎么看|留言/.test(lastLines)
+    ? "结尾有互动或总结倾向"
+    : "结尾收束方式待补充";
+  const catchphrase = extractRepeatedPhrase(lines);
+  return [opening, intro, transition, ending, catchphrase].filter(Boolean).slice(0, 5);
+}
+
+function extractRepeatedPhrase(lines) {
+  const candidates = {};
+  for (const line of lines) {
+    const segments = line
+      .split(/[，。！？；、,.!?;\s]+/)
+      .map((item) => item.trim())
+      .filter((item) => item.length >= 2 && item.length <= 10);
+    for (const segment of segments) {
+      if (/^(这个|那个|然后|所以|但是|因为|如果|就是)$/.test(segment)) continue;
+      candidates[segment] = (candidates[segment] || 0) + 1;
+    }
+  }
+  const repeated = Object.entries(candidates)
+    .filter(([, count]) => count > 1)
+    .sort((a, b) => b[1] - a[1])[0];
+  return repeated ? `疑似口头禅/固定表达：「${repeated[0]}」` : "口头禅和固定表达待更多样本确认";
+}
+
 function buildVideoFeatures(text, hasDouyin) {
   if (!hasDouyin) {
     return ["未读取到视频账号数据", "可补充抖音主页或口播稿", "后续接入后分析开头、字幕、时长、封面和互动"];
@@ -562,6 +605,7 @@ function renderProfile() {
   renderKeywords(profile.keywords);
   renderFeatureList(els.contentFeatures, profile.contentFeatures);
   renderFeatureList(els.textFeatures, profile.textFeatures);
+  renderFeatureList(els.speechPatterns, profile.speechPatterns || buildSpeechPatterns(""));
   renderFeatureList(els.videoFeatures, profile.videoFeatures);
   renderFeatureList(els.trafficFeatures, profile.trafficFeatures);
   renderRules();
@@ -576,6 +620,7 @@ function renderEmptyProfile() {
   els.keywordChips.innerHTML = '<span class="chip">请补充正文</span><span class="chip">或换可读取链接</span>';
   renderFeatureList(els.contentFeatures, ["没有读取到可分析正文"]);
   renderFeatureList(els.textFeatures, ["请粘贴文章正文、口播稿或上传 txt / md / html"]);
+  renderFeatureList(els.speechPatterns, ["补充正文后分析开场、结尾、转场和口头禅"]);
   renderFeatureList(els.videoFeatures, ["抖音主页目前需要补充作品标题、文案和互动数据"]);
   renderFeatureList(els.trafficFeatures, ["动态网页需要公开正文或专门连接器"]);
   renderRules();
@@ -674,11 +719,13 @@ function renderRules() {
 function renderSummary(profile) {
   const keywords = profile.keywords.slice(0, 5).map((item) => item.word).join("、") || "待补充";
   const domains = profile.domains.slice(0, 2).map((item) => item.name).join("、") || "待补充";
+  const speech = (profile.speechPatterns || []).slice(0, 2).join("；") || "待补充";
   const rules = state.rules.slice(0, 3).join("；") || "暂无额外规则";
   els.profileSummary.innerHTML = `
     <div class="summary-line"><strong>领域：</strong>${escapeHtml(domains)}</div>
     <div class="summary-line"><strong>常用词：</strong>${escapeHtml(keywords)}</div>
     <div class="summary-line"><strong>气质：</strong>${topTones(profile.tones).join("、")}</div>
+    <div class="summary-line"><strong>话术：</strong>${escapeHtml(speech)}</div>
     <div class="summary-line"><strong>规则：</strong>${escapeHtml(rules)}</div>
   `;
 }

@@ -494,37 +494,6 @@ input:focus {
   background: var(--clay);
 }
 
-.sampling-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
-}
-
-.sampling-grid div {
-  min-height: 112px;
-  padding: 13px;
-  border-radius: 8px;
-  background: var(--blue-soft);
-}
-
-.sampling-grid div:nth-child(2) {
-  background: var(--green-soft);
-}
-
-.sampling-grid div:nth-child(3) {
-  background: var(--clay-soft);
-}
-
-.sampling-grid div:nth-child(4) {
-  background: #efe9dc;
-}
-
-.sampling-grid p {
-  margin: 8px 0 0;
-  color: var(--muted);
-  line-height: 1.55;
-}
-
 .chat-panel {
   min-height: 258px;
 }
@@ -692,9 +661,6 @@ input:focus {
     grid-column: span 2;
   }
 
-  .sampling-grid {
-    grid-template-columns: 1fr 1fr;
-  }
 }
 
 @media (max-width: 680px) {
@@ -716,7 +682,6 @@ input:focus {
   .collect-grid,
   .profile-layout,
   .deliver-layout,
-  .sampling-grid,
   .type-grid {
     grid-template-columns: 1fr;
   }
