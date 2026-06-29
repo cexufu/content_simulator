@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Content Simulator</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="modal-backdrop" id="consentModal">
+      <section class="modal">
+        <p class="eyebrow">友情体验</p>
+        <h1>Content Simulator</h1>
+        <p>本产品仅用于本次内容学习与生成。</p>
+        <p>不额外收集手机号等无关信息。</p>
+        <p>当前为友情体验，不做商业用途。</p>
+        <p class="muted">请勿上传敏感隐私、商业机密或未经授权内容。</p>
+        <button class="primary full" id="acceptConsent">我知道了</button>
+      </section>
+    </div>
+
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">内容风格学习工具</p>
+          <h1>Content Simulator</h1>
+        </div>
+        <button class="ghost small" id="clearDataBtn">清空本地数据</button>
+      </header>
+
+      <nav class="stepper" aria-label="产品步骤">
+        <button class="step active" data-step="collect">
+          <span>01</span>
+          原稿收集
+        </button>
+        <button class="step" data-step="profile">
+          <span>02</span>
+          风格确认
+        </button>
+        <button class="step" data-step="deliver">
+          <span>03</span>
+          成稿交付
+        </button>
+      </nav>
+
+      <section class="view active" id="collectView">
+        <div class="page-head">
+          <p class="eyebrow">原稿收集区</p>
+          <h2>先读你的旧稿</h2>
+          <p>上传文章、文档，或粘贴一段文字。</p>
+        </div>
+
+        <div class="collect-grid">
+          <section class="panel source-panel">
+            <div class="panel-title">
+              <h3>粘贴正文</h3>
+              <span>TXT / HTML / 手稿</span>
+            </div>
+            <textarea id="textInput" rows="10" placeholder="把希望学习的内容粘贴在这里"></textarea>
+            <button class="primary" id="addTextBtn">加入原稿</button>
+          </section>
+
+          <section class="panel source-panel">
+            <div class="panel-title">
+              <h3>上传文件</h3>
+              <span>PDF / Word / TXT / HTML</span>
+            </div>
+            <label class="dropzone" id="dropzone" for="fileInput">
+              <input id="fileInput" type="file" multiple accept=".txt,.md,.html,.htm,.pdf,.doc,.docx" />
+              <strong>拖入文件，或点击选择</strong>
+              <small>TXT、MD、HTML 会在浏览器内读取。PDF、Word 会先记录，后续接后端解析。</small>
+            </label>
+          </section>
+
+          <section class="panel source-panel">
+            <div class="panel-title">
+              <h3>主页链接</h3>
+              <span>抖音 / 网页</span>
+            </div>
+            <input id="urlInput" type="url" placeholder="粘贴抖音主页或作品链接" />
+            <button class="secondary" id="addUrlBtn">记录链接</button>
+            <p class="hint">抖音主页会预留连接器。接入后端后，优先读取流量较好的公开视频。</p>
+          </section>
+        </div>
+
+        <section class="panel source-list-wrap">
+          <div class="panel-title">
+            <h3>已加入</h3>
+            <span id="sourceCount">0 条材料</span>
+          </div>
+          <div class="source-list" id="sourceList"></div>
+          <div class="actions">
+            <button class="primary" id="analyzeBtn">开始读稿</button>
+            <p class="hint">系统会抽取主题、常用词、内容特征、视频特征和传播线索。</p>
+          </div>
+        </section>
+      </section>
+
+      <section class="view" id="profileView">
+        <div class="page-head">
+          <p class="eyebrow">风格确认区</p>
+          <h2>这是它读出的你</h2>
+          <p>你可以确认，也可以修正。</p>
+        </div>
+
+        <div class="profile-layout">
+          <section class="panel chart-panel">
+            <div class="panel-title">
+              <h3>表达气质</h3>
+              <span id="confidenceLabel">待学习</span>
+            </div>
+            <div class="radar-wrap">
+              <svg id="toneRadar" viewBox="0 0 220 220" role="img" aria-label="表达气质雷达图"></svg>
+            </div>
+          </section>
+
+          <section class="panel chart-panel">
+            <div class="panel-title">
+              <h3>领域分布</h3>
+              <span>抽样结果</span>
+            </div>
+            <div class="donut-wrap">
+              <div class="donut" id="domainDonut"></div>
+              <div class="legend" id="domainLegend"></div>
+            </div>
+          </section>
+
+          <section class="panel wide">
+            <div class="panel-title">
+              <h3>常用词</h3>
+              <span>关键词纹理</span>
+            </div>
+            <div class="chips" id="keywordChips"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title">
+              <h3>内容特征</h3>
+              <span>写什么</span>
+            </div>
+            <ul class="feature-list" id="contentFeatures"></ul>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title">
+              <h3>文本风格</h3>
+              <span>怎么写</span>
+            </div>
+            <ul class="feature-list" id="textFeatures"></ul>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title">
+              <h3>视频特征</h3>
+              <span>怎么拍</span>
+            </div>
+            <ul class="feature-list" id="videoFeatures"></ul>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title">
+              <h3>传播线索</h3>
+              <span>怎么起量</span>
+            </div>
+            <ul class="feature-list" id="trafficFeatures"></ul>
+          </section>
+
+          <section class="panel wide">
+            <div class="panel-title">
+              <h3>抽样策略</h3>
+              <span>账号内容较多时</span>
+            </div>
+            <div class="sampling-grid">
+              <div>
+                <strong>高流量</strong>
+                <p>优先读点赞、评论、收藏、转发靠前的内容。</p>
+              </div>
+              <div>
+                <strong>近期</strong>
+                <p>补充最近内容，避免只学习旧风格。</p>
+              </div>
+              <div>
+                <strong>代表主题</strong>
+                <p>按不同领域抽样，保留内容宽度。</p>
+              </div>
+              <div>
+                <strong>低流量</strong>
+                <p>少量读取，用来判断需要避开的表达。</p>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel wide">
+            <div class="panel-title">
+              <h3>额外规则</h3>
+              <span>你说了算</span>
+            </div>
+            <textarea id="rulesInput" rows="4" placeholder="例如：不要太营销。多用短句。标题不要夸张。"></textarea>
+            <button class="secondary" id="saveRulesBtn">记住规则</button>
+            <div class="rule-tags" id="ruleTags"></div>
+          </section>
+
+          <section class="panel wide chat-panel">
+            <div class="panel-title">
+              <h3>不像我的地方</h3>
+              <span>继续校准</span>
+            </div>
+            <div class="chat-log" id="profileChatLog"></div>
+            <div class="chat-row">
+              <input id="profileChatInput" type="text" placeholder="哪里不像你？" />
+              <button class="secondary" id="profileChatBtn">修改</button>
+            </div>
+          </section>
+        </div>
+
+        <div class="sticky-actions">
+          <button class="primary" id="confirmProfileBtn">确认文风</button>
+        </div>
+      </section>
+
+      <section class="view" id="deliverView">
+        <div class="page-head">
+          <p class="eyebrow">成稿交付区</p>
+          <h2>开始写新的内容</h2>
+          <p>输入主题和要求，它会按确认后的风格生成。</p>
+        </div>
+
+        <div class="deliver-layout">
+          <section class="panel">
+            <div class="panel-title">
+              <h3>已确认</h3>
+              <span>风格摘要</span>
+            </div>
+            <div class="profile-summary" id="profileSummary"></div>
+          </section>
+
+          <section class="panel task-panel">
+            <div class="panel-title">
+              <h3>任务</h3>
+              <span>你想写什么</span>
+            </div>
+            <div class="type-grid" id="typeGrid">
+              <label><input type="radio" name="contentType" value="公众号文章" checked />公众号</label>
+              <label><input type="radio" name="contentType" value="短视频口播稿" />口播稿</label>
+              <label><input type="radio" name="contentType" value="小红书文案" />小红书</label>
+              <label><input type="radio" name="contentType" value="朋友圈长文" />朋友圈</label>
+              <label><input type="radio" name="contentType" value="项目介绍" />项目介绍</label>
+              <label><input type="radio" name="contentType" value="自定义内容" />自定义</label>
+            </div>
+            <textarea id="taskInput" rows="8" placeholder="你想写什么？"></textarea>
+            <button class="primary" id="generateBtn">生成初稿</button>
+          </section>
+
+          <section class="panel output-panel">
+            <div class="panel-title">
+              <h3>初稿</h3>
+              <span id="draftStatus">等待生成</span>
+            </div>
+            <article class="draft" id="draftOutput"></article>
+            <div class="actions">
+              <button class="secondary" id="copyBtn">复制</button>
+              <button class="secondary" id="downloadTxtBtn">下载 TXT</button>
+              <button class="secondary" id="downloadMdBtn">下载 Markdown</button>
+            </div>
+          </section>
+
+          <section class="panel chat-panel">
+            <div class="panel-title">
+              <h3>继续修改</h3>
+              <span>多轮调整</span>
+            </div>
+            <div class="chat-log" id="deliverChatLog"></div>
+            <div class="chat-row">
+              <input id="deliverChatInput" type="text" placeholder="继续改哪里？" />
+              <button class="secondary" id="deliverChatBtn">修改</button>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
