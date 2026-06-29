@@ -114,6 +114,7 @@ MODEL_API_STYLE=chat
 
 ## API
 
+- `POST /api/resolve-url`：尝试读取网页摘要；抖音主页读取受限时返回明确提示。
 - `POST /api/analyze`：分析原稿，返回文风画像。
 - `POST /api/refine-profile`：根据用户反馈校准画像。
 - `POST /api/generate`：根据画像和任务生成初稿。
@@ -125,4 +126,5 @@ MODEL_API_STYLE=chat
 
 - TXT、Markdown、HTML 文件会在浏览器内读取。
 - PDF、Word、抖音主页链接会被记录，并预留后端连接器状态。
-- 抖音主页读取仍需要单独连接器；当前后端先接 DeepSeek 文风学习与生成。
+- 普通网页链接会由后端尝试读取标题、描述和可见文本。
+- 抖音主页完整作品列表通常需要抖音开放平台授权、专门连接器，或用户粘贴/导入作品标题、文案、标签和互动数据。

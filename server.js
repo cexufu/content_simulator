@@ -65,11 +65,14 @@ async function handleApi(req, res, pathname) {
   if (req.method !== "POST") {
     return sendJson(res, 405, { error: "Method not allowed" });
   }
+
+  const payload = await readJsonBody(req);
+  if (pathname === "/api/resolve-url") return resolveUrl(req, res, payload);
+
   if (!MODEL_API_KEY) {
     return sendJson(res, 503, { error: "MODEL_API_KEY or DEEPSEEK_API_KEY is not configured" });
   }
 
-  const payload = await readJsonBody(req);
   if (pathname === "/api/analyze") return analyze(req, res, payload);
   if (pathname === "/api/refine-profile") return refineProfile(req, res, payload);
   if (pathname === "/api/generate") return generateDraft(req, res, payload);
@@ -77,6 +80,103 @@ async function handleApi(req, res, pathname) {
   if (pathname === "/api/generate-stream") return generateDraftStream(req, res, payload);
   if (pathname === "/api/revise-stream") return reviseDraftStream(req, res, payload);
   return sendJson(res, 404, { error: "API not found" });
+}
+
+async function resolveUrl(_req, res, payload) {
+  const rawUrl = String(payload.url || "").trim();
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(rawUrl);
+  } catch (_error) {
+    return sendJson(res, 400, { error: "链接格式不正确" });
+  }
+
+  const isDouyin = /(^|\.)douyin\.com$|(^|\.)iesdouyin\.com$|v\.douyin\.com$/i.test(parsedUrl.hostname);
+  try {
+    const page = await fetchPublicPage(parsedUrl.href);
+    const title = page.title || (isDouyin ? "抖音主页或作品链接" : "网页链接");
+    const body = page.text.trim();
+    if (isDouyin && body.length < 800) {
+      return sendJson(res, 200, buildDouyinLimitedSource(parsedUrl.href, title));
+    }
+    return sendJson(res, 200, {
+      type: isDouyin ? "douyin" : "url",
+      title,
+      url: parsedUrl.href,
+      body: body.slice(0, 8000),
+      status: isDouyin ? "已读取公开页面摘要" : "已读取网页摘要",
+      limited: false
+    });
+  } catch (error) {
+    if (isDouyin) {
+      return sendJson(res, 200, buildDouyinLimitedSource(parsedUrl.href, "抖音主页或作品链接"));
+    }
+    return sendJson(res, 200, {
+      type: "url",
+      title: "网页链接",
+      url: parsedUrl.href,
+      body: `网页链接已记录，但当前后端没有读取到正文。错误：${error.message}`,
+      status: "读取受限，已记录链接",
+      limited: true
+    });
+  }
+}
+
+async function fetchPublicPage(url) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.7"
+      }
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const html = await response.text();
+    return extractHtmlSummary(html);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function extractHtmlSummary(html) {
+  const title = decodeHtml((html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || "").trim());
+  const description = decodeHtml(
+    (html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']*)["'][^>]*>/i)?.[1] ||
+      html.match(/<meta[^>]+content=["']([^"']*)["'][^>]+name=["']description["'][^>]*>/i)?.[1] ||
+      "").trim()
+  );
+  const text = decodeHtml(
+    html
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+  );
+  return {
+    title,
+    text: [title, description, text].filter(Boolean).join("\n\n").slice(0, 12000)
+  };
+}
+
+function buildDouyinLimitedSource(url, title) {
+  return {
+    type: "douyin",
+    title,
+    url,
+    body: [
+      "抖音主页链接已记录，但公开网页通常不会直接暴露完整作品列表、播放量、点赞、评论、收藏和转发数据。",
+      "要完成账号级学习，需要接入抖音开放平台授权、专门连接器，或由用户粘贴/导入作品标题、文案、标签和互动数据。",
+      "当前仅能把该链接作为待补充材料，不会把它误判为已完整读取。"
+    ].join("\n"),
+    status: "抖音读取受限，需补充作品数据",
+    limited: true
+  };
 }
 
 async function analyze(_req, res, payload) {
@@ -508,6 +608,17 @@ function maskBaseUrl(value) {
   } catch (_error) {
     return "custom";
   }
+}
+
+function decodeHtml(value) {
+  return String(value)
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#(\d+);/g, (_match, code) => String.fromCharCode(Number(code)));
 }
 
 function handleCors(req, res) {

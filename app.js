@@ -117,7 +117,7 @@ function bindEvents() {
   els.addTextBtn.addEventListener("click", addTextSource);
   els.fileInput.addEventListener("change", handleFiles);
   bindDropzone();
-  els.addUrlBtn.addEventListener("click", addUrlSource);
+  els.addUrlBtn.addEventListener("click", () => addUrlSource());
   els.analyzeBtn.addEventListener("click", () => analyzeAndGo());
   els.saveRulesBtn.addEventListener("click", saveRulesFromInput);
   els.profileChatBtn.addEventListener("click", () => sendProfileMessage());
@@ -240,23 +240,44 @@ async function addFiles(files) {
   renderSources();
 }
 
-function addUrlSource() {
+async function addUrlSource() {
   const url = els.urlInput.value.trim();
   if (!url) return;
-  const isDouyin = /douyin|iesdouyin|v\.douyin/i.test(url);
-  state.sources.push({
-    id: makeId(),
-    type: isDouyin ? "douyin" : "url",
-    title: isDouyin ? "抖音主页或作品链接" : "网页链接",
-    url,
-    body: isDouyin
-      ? "抖音账号内容接入：后端连接器将读取公开视频标题、文案、标签、发布时间和互动数据。"
-      : "网页链接已记录：后端连接器将读取页面标题、正文、标题层级和行动引导。",
-    status: isDouyin ? "已记录，待后端读取" : "已记录，待后端读取"
+  await withBusy(els.addUrlBtn, "正在读取", async () => {
+    const isDouyin = /douyin|iesdouyin|v\.douyin/i.test(url);
+    let source;
+    try {
+      const result = await postApi("/api/resolve-url", { url });
+      source = {
+        id: makeId(),
+        type: result.type || (isDouyin ? "douyin" : "url"),
+        title: result.title || (isDouyin ? "抖音主页或作品链接" : "网页链接"),
+        url,
+        body: result.body || "",
+        status: result.status || "已读取链接",
+        limited: Boolean(result.limited)
+      };
+      setApiStatus(result.limited ? "链接受限" : "已读取链接", result.limited ? "offline" : "online");
+    } catch (error) {
+      console.warn(error);
+      source = {
+        id: makeId(),
+        type: isDouyin ? "douyin" : "url",
+        title: isDouyin ? "抖音主页或作品链接" : "网页链接",
+        url,
+        body: isDouyin
+          ? "抖音主页链接已记录，但当前环境没有读取到作品列表。请粘贴作品标题、文案、标签或互动数据，以便完成风格学习。"
+          : "网页链接已记录，但当前环境没有读取到正文。",
+        status: isDouyin ? "抖音读取受限，需补充作品数据" : "读取受限，已记录链接",
+        limited: true
+      };
+      setApiStatus("链接受限", "offline");
+    }
+    state.sources.push(source);
+    els.urlInput.value = "";
+    saveState();
+    renderSources();
   });
-  els.urlInput.value = "";
-  saveState();
-  renderSources();
 }
 
 function renderSources() {
