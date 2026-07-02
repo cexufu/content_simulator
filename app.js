@@ -12,6 +12,7 @@ const state = {
   profile: null,
   rules: [],
   draft: "",
+  finalized: false,
   thinking: "",
   profileChat: [],
   deliverChat: []
@@ -78,6 +79,7 @@ function cacheElements() {
     "copyBtn",
     "downloadTxtBtn",
     "downloadMdBtn",
+    "downloadPdfBtn",
     "deliverChatLog",
     "deliverChatInput",
     "deliverChatBtn"
@@ -103,6 +105,7 @@ function bindEvents() {
       profile: null,
       rules: [],
       draft: "",
+      finalized: false,
       thinking: "",
       profileChat: [],
       deliverChat: []
@@ -137,6 +140,7 @@ function bindEvents() {
   els.copyBtn.addEventListener("click", copyDraft);
   els.downloadTxtBtn.addEventListener("click", () => downloadDraft("txt"));
   els.downloadMdBtn.addEventListener("click", () => downloadDraft("md"));
+  els.downloadPdfBtn.addEventListener("click", downloadPdf);
   checkApiHealth();
 }
 
@@ -780,6 +784,7 @@ async function generateDraft() {
     try {
       setApiStatus("AI 生成中", "busy");
       state.draft = "";
+      state.finalized = false;
       state.thinking = "";
       renderDraft();
       await streamApi("/api/generate-stream", {
@@ -802,6 +807,7 @@ async function generateDraft() {
     } catch (error) {
       console.warn(error);
       state.draft = composeDraft(type, task, state.profile, state.rules);
+      state.finalized = false;
       state.thinking = "";
       state.deliverChat = [{ role: "ai", text: "初稿已生成。可以继续说要改哪里。" }];
       setApiStatus("本地模式", "offline");
@@ -827,9 +833,15 @@ async function sendDeliverMessage() {
   els.deliverChatInput.value = "";
   renderChats();
 
+  if (isFinalApproval(message)) {
+    await finalizeDraft(originalDraft, message);
+    return;
+  }
+
   try {
     setApiStatus("AI 改稿中", "busy");
     state.draft = "";
+    state.finalized = false;
     state.thinking = "";
     renderDraft();
     await streamApi("/api/revise-stream", {
@@ -848,11 +860,13 @@ async function sendDeliverMessage() {
       }
     });
     if (!state.draft.trim()) state.draft = originalDraft;
+    state.finalized = false;
     state.deliverChat.push({ role: "ai", text: "已按你的意见修改。" });
     setApiStatus("AI 后台", "online");
   } catch (error) {
     console.warn(error);
     state.draft = reviseDraft(originalDraft, message);
+    state.finalized = false;
     state.deliverChat.push({ role: "ai", text: "已按你的意见修改。你可以继续调整语气、结构或长度。" });
     setApiStatus("本地模式", "offline");
   }
@@ -860,6 +874,92 @@ async function sendDeliverMessage() {
   saveState();
   renderDraft();
   renderChats();
+}
+
+async function finalizeDraft(originalDraft, message) {
+  try {
+    setApiStatus("整理最终版", "busy");
+    state.draft = "";
+    state.finalized = false;
+    state.thinking = "";
+    renderDraft();
+    await streamApi("/api/revise-stream", {
+      draft: originalDraft,
+      instruction: buildFinalInstruction(message),
+      profile: state.profile,
+      rules: state.rules
+    }, {
+      onThinking: (text) => {
+        state.thinking += text;
+        renderDraft();
+      },
+      onContent: (text) => {
+        state.draft += text;
+        renderDraft();
+      }
+    });
+    if (!state.draft.trim()) state.draft = cleanFinalDraft(originalDraft);
+    state.draft = cleanFinalDraft(state.draft);
+    state.finalized = true;
+    state.deliverChat.push({ role: "ai", text: "已生成最终清洁版，可直接下载。" });
+    setApiStatus("AI 后台", "online");
+  } catch (error) {
+    console.warn(error);
+    state.draft = cleanFinalDraft(originalDraft);
+    state.finalized = true;
+    state.deliverChat.push({ role: "ai", text: "已整理成最终清洁版，可直接下载。" });
+    setApiStatus("本地模式", "offline");
+  }
+
+  saveState();
+  renderDraft();
+  renderChats();
+}
+
+function isFinalApproval(message) {
+  const cleaned = message.toLowerCase().replace(/[，。！？、,.!?\s]/g, "");
+  return [
+    "好",
+    "好的",
+    "可以",
+    "可以了",
+    "行",
+    "行了",
+    "就这样",
+    "确认",
+    "确认了",
+    "定稿",
+    "定了",
+    "没问题",
+    "完成",
+    "通过",
+    "满意",
+    "ok",
+    "okay",
+    "好的就这样",
+    "可以定稿"
+  ].includes(cleaned);
+}
+
+function buildFinalInstruction(message) {
+  return [
+    `用户确认语：${message}`,
+    "用户已经确认当前最后版本。",
+    "请基于当前稿件重新整理一份完整清洁版。",
+    "不要输出解释、修改说明、寒暄、Markdown 代码块或对话内容。",
+    "保留标题和正文；修正明显重复、断裂、空行混乱和临时稿痕迹。",
+    "只输出最终可交付正文。"
+  ].join("\n");
+}
+
+function cleanFinalDraft(draft) {
+  return String(draft || "")
+    .replace(/^```[a-zA-Z]*\s*/g, "")
+    .replace(/```$/g, "")
+    .replace(/^\s*(以下是|这是|好的，?下面是|已为你整理).*?[:：]\s*/i, "")
+    .replace(/\n\s*修改说明[:：][\s\S]*$/i, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function reviseDraft(draft, instruction) {
@@ -882,7 +982,7 @@ function reviseDraft(draft, instruction) {
 }
 
 function renderDraft() {
-  els.draftStatus.textContent = state.draft ? "已生成" : "等待生成";
+  els.draftStatus.textContent = state.finalized ? "最终清洁版" : state.draft ? "已生成" : "等待生成";
   els.draftOutput.textContent = state.draft || "初稿会显示在这里。";
   els.thinkingOutput.textContent = state.thinking || "";
   els.thinkingWrap.hidden = !state.thinking;
@@ -910,9 +1010,37 @@ function downloadDraft(format) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = `content-simulator-draft.${format === "md" ? "md" : "txt"}`;
+  anchor.download = `content-simulator-${state.finalized ? "final" : "draft"}.${format === "md" ? "md" : "txt"}`;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+function downloadPdf() {
+  if (!state.draft) return;
+  const printWindow = window.open("", "_blank");
+  if (!printWindow) {
+    window.print();
+    return;
+  }
+  const title = state.finalized ? "Content Simulator 最终稿" : "Content Simulator 初稿";
+  printWindow.document.write(`
+    <!doctype html>
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <title>${escapeHtml(title)}</title>
+        <style>
+          body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; padding: 32px; color: #1f2420; }
+          pre { white-space: pre-wrap; word-break: break-word; font: inherit; line-height: 1.75; }
+        </style>
+      </head>
+      <body>
+        <pre>${escapeHtml(state.draft)}</pre>
+        <script>window.onload = () => window.print();</script>
+      </body>
+    </html>
+  `);
+  printWindow.document.close();
 }
 
 function countWord(text, word) {
