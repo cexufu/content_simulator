@@ -204,60 +204,80 @@
         </div>
 
         <div class="deliver-layout">
-          <section class="panel">
-            <div class="panel-title">
-              <h3>已确认</h3>
-              <span>风格摘要</span>
-            </div>
-            <div class="profile-summary" id="profileSummary"></div>
-          </section>
+          <div class="deliver-side">
+            <section class="panel">
+              <div class="panel-title">
+                <h3>已确认</h3>
+                <span>风格摘要</span>
+              </div>
+              <div class="profile-summary" id="profileSummary"></div>
+            </section>
 
-          <section class="panel task-panel">
-            <div class="panel-title">
-              <h3>任务</h3>
-              <span>你想写什么</span>
-            </div>
-            <div class="type-grid" id="typeGrid">
-              <label><input type="radio" name="contentType" value="公众号文章" checked />公众号</label>
-              <label><input type="radio" name="contentType" value="短视频口播稿" />口播稿</label>
-              <label><input type="radio" name="contentType" value="小红书文案" />小红书</label>
-              <label><input type="radio" name="contentType" value="朋友圈长文" />朋友圈</label>
-              <label><input type="radio" name="contentType" value="项目介绍" />项目介绍</label>
-              <label><input type="radio" name="contentType" value="自定义内容" />自定义</label>
-            </div>
-            <textarea id="taskInput" rows="8" placeholder="你想写什么？"></textarea>
-            <button class="primary" id="generateBtn">生成初稿</button>
-          </section>
+            <section class="panel task-panel">
+              <div class="panel-title">
+                <h3>任务</h3>
+                <span>你想写什么</span>
+              </div>
+              <div class="type-grid" id="typeGrid">
+                <label><input type="radio" name="contentType" value="公众号文章" checked />公众号</label>
+                <label><input type="radio" name="contentType" value="短视频口播稿" />口播稿</label>
+                <label><input type="radio" name="contentType" value="小红书文案" />小红书</label>
+                <label><input type="radio" name="contentType" value="朋友圈长文" />朋友圈</label>
+                <label><input type="radio" name="contentType" value="项目介绍" />项目介绍</label>
+                <label><input type="radio" name="contentType" value="自定义内容" />自定义</label>
+              </div>
+              <textarea id="taskInput" rows="7" placeholder="你想写什么？"></textarea>
+              <button class="primary full" id="generateBtn">生成内容</button>
+            </section>
 
-          <section class="panel output-panel">
-            <div class="panel-title">
-              <h3>初稿</h3>
-              <span id="draftStatus">等待生成</span>
-            </div>
-            <article class="draft" id="draftOutput"></article>
-            <details class="thinking-box" id="thinkingWrap">
-              <summary>思考过程</summary>
-              <pre id="thinkingOutput"></pre>
-            </details>
-            <div class="actions">
-              <button class="secondary" id="copyBtn">复制</button>
-              <button class="secondary" id="downloadTxtBtn">下载 TXT</button>
-              <button class="secondary" id="downloadMdBtn">下载 Markdown</button>
-              <button class="secondary" id="downloadPdfBtn">导出 PDF</button>
-            </div>
-          </section>
+            <section class="panel chat-panel">
+              <div class="panel-title">
+                <h3>继续修改</h3>
+                <span>多轮调整</span>
+              </div>
+              <div class="chat-log" id="deliverChatLog"></div>
+              <div class="chat-row">
+                <input id="deliverChatInput" type="text" placeholder="继续改哪里？确认时可以说“好的”" />
+                <button class="secondary" id="deliverChatBtn">发送</button>
+              </div>
+            </section>
+          </div>
 
-          <section class="panel chat-panel">
-            <div class="panel-title">
-              <h3>继续修改</h3>
-              <span>多轮调整</span>
-            </div>
-            <div class="chat-log" id="deliverChatLog"></div>
-            <div class="chat-row">
-              <input id="deliverChatInput" type="text" placeholder="继续改哪里？确认时可以说“好的”" />
-              <button class="secondary" id="deliverChatBtn">发送</button>
-            </div>
-          </section>
+          <div class="deliver-results">
+            <section class="panel output-panel">
+              <div class="panel-title">
+                <h3>内容初稿</h3>
+                <span id="initialDraftStatus">等待生成</span>
+              </div>
+              <article class="draft compact" id="initialDraftOutput"></article>
+            </section>
+
+            <section class="panel output-panel">
+              <div class="panel-title">
+                <h3>五维评分</h3>
+                <span id="evaluationStatus">等待评分</span>
+              </div>
+              <article class="draft compact" id="evaluationOutput"></article>
+            </section>
+
+            <section class="panel output-panel">
+              <div class="panel-title">
+                <h3>文风优化稿</h3>
+                <span id="draftStatus">等待优化</span>
+              </div>
+              <article class="draft final" id="draftOutput"></article>
+              <details class="thinking-box" id="thinkingWrap">
+                <summary>思考过程</summary>
+                <pre id="thinkingOutput"></pre>
+              </details>
+              <div class="actions">
+                <button class="secondary" id="copyBtn">复制</button>
+                <button class="secondary" id="downloadTxtBtn">下载 TXT</button>
+                <button class="secondary" id="downloadMdBtn">下载 Markdown</button>
+                <button class="secondary" id="downloadPdfBtn">导出 PDF</button>
+              </div>
+            </section>
+          </div>
         </div>
       </section>
     </main>

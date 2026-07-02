@@ -80,6 +80,7 @@ async function handleApi(req, res, pathname) {
   if (pathname === "/api/generate") return generateDraft(req, res, payload);
   if (pathname === "/api/revise") return reviseDraft(req, res, payload);
   if (pathname === "/api/generate-stream") return generateDraftStream(req, res, payload);
+  if (pathname === "/api/workflow-stream") return generateWorkflowStream(req, res, payload);
   if (pathname === "/api/revise-stream") return reviseDraftStream(req, res, payload);
   return sendJson(res, 404, { error: "API not found" });
 }
@@ -559,6 +560,90 @@ async function generateDraftStream(_req, res, payload) {
   }
 }
 
+async function generateWorkflowStream(_req, res, payload) {
+  const profile = normalizeProfile(payload.profile || {}, payload.rules || []);
+  const rules = normalizeRules(payload.rules || profile.rules || []);
+  const task = String(payload.task || "").slice(0, 4000);
+  const type = String(payload.type || "内容").slice(0, 100);
+  sendSseHeaders(res);
+
+  try {
+    const trendContext = await collectTrendContext(task).catch(() => ({ hotItems: [], note: "热点读取失败，按用户任务生成。" }));
+    let initialDraft = "";
+    let evaluation = "";
+
+    writeSse(res, "stage", { name: "draft" });
+    await callChatCompletionsStream({
+      instructions: [
+        "你是 Content Simulator 的内容初稿后台。",
+        "先不要模仿用户文风，优先生成有信息量、有角度、有表达创造力的内容初稿。",
+        "可参考公开热榜上下文，但不要编造事实；不确定的信息用谨慎表述。",
+        "直接输出完整初稿正文，不要输出 JSON，不要输出 Markdown 代码块。"
+      ].join("\n"),
+      input: JSON.stringify({
+        task: "生成内容初稿",
+        contentType: type,
+        userTask: task,
+        trendContext
+      }),
+      onThinking: (text) => writeSse(res, "thinking", { text }),
+      onContent: (text) => {
+        initialDraft += text;
+        writeSse(res, "draftContent", { text });
+      }
+    });
+
+    writeSse(res, "stage", { name: "evaluation" });
+    await callChatCompletionsStream({
+      instructions: [
+        "你是 Content Simulator 的内容评估后台。",
+        "请对初稿做五维评分：新闻性/时效性、网络传播价值、情绪感染力、故事真实感/贴近性、信息可靠性。",
+        "每项给 0-100 分，并用一句短理由说明。",
+        "输出要简洁，不要输出 JSON，不要输出 Markdown 表格。"
+      ].join("\n"),
+      input: JSON.stringify({
+        task: "五维评分",
+        userTask: task,
+        draft: initialDraft,
+        trendContext
+      }),
+      onThinking: (text) => writeSse(res, "thinking", { text }),
+      onContent: (text) => {
+        evaluation += text;
+        writeSse(res, "evaluationContent", { text });
+      }
+    });
+
+    writeSse(res, "stage", { name: "final" });
+    await callChatCompletionsStream({
+      instructions: [
+        "你是 Content Simulator 的文风优化后台。",
+        "请基于初稿和五维评分进行二次优化，同时贴近用户已确认的文风画像。",
+        "必须参考 profile 中的常用词、文本风格、节点话术、口头禅、额外规则。",
+        "保留初稿中有价值的信息和角度，提升网感、可读性和传播性。",
+        "不要解释优化过程，直接输出完整可交付稿件正文，不要输出 JSON，不要输出 Markdown 代码块。"
+      ].join("\n"),
+      input: JSON.stringify({
+        task: "结合文风优化",
+        contentType: type,
+        userTask: task,
+        initialDraft,
+        evaluation,
+        profile,
+        rules
+      }),
+      onThinking: (text) => writeSse(res, "thinking", { text }),
+      onContent: (text) => writeSse(res, "finalContent", { text })
+    });
+
+    writeSse(res, "done", { ok: true });
+  } catch (error) {
+    writeSse(res, "error", { error: error.message || "工作流生成失败" });
+  } finally {
+    res.end();
+  }
+}
+
 async function reviseDraft(_req, res, payload) {
   const profile = normalizeProfile(payload.profile || {}, payload.rules || []);
   const rules = normalizeRules(payload.rules || profile.rules || []);
@@ -621,6 +706,51 @@ async function reviseDraftStream(_req, res, payload) {
   } finally {
     res.end();
   }
+}
+
+async function collectTrendContext(task) {
+  const hotItems = await fetchTopHubItems().catch(() => []);
+  const keywords = extractSearchWords(task);
+  const matched = hotItems.filter((item) => keywords.some((word) => item.includes(word)));
+  return {
+    note: hotItems.length ? "已读取公开热榜摘要，作为网感和时效参考。" : "未读取到公开热榜，按用户任务生成。",
+    keywords,
+    hotItems: (matched.length ? matched : hotItems).slice(0, 12)
+  };
+}
+
+async function fetchTopHubItems() {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 6000);
+  try {
+    const response = await fetch("https://tophub.today/", {
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.7"
+      }
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const html = await response.text();
+    const text = cleanText(html);
+    const candidates = text
+      .split(/(?=微博|知乎|百度|抖音|微信|今日头条|哔哩哔哩|小红书)|\s{2,}/)
+      .map((item) => item.replace(/\s+/g, " ").trim())
+      .filter((item) => item.length >= 6 && item.length <= 80);
+    return Array.from(new Set(candidates)).slice(0, 40);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function extractSearchWords(text) {
+  const words = String(text || "")
+    .replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, " ")
+    .split(/\s+/)
+    .map((item) => item.trim())
+    .filter((item) => item.length >= 2 && item.length <= 12);
+  return Array.from(new Set(words)).slice(0, 8);
 }
 
 async function callOpenAI({ instructions, input }) {

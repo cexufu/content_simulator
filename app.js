@@ -11,6 +11,8 @@ const state = {
   sources: [],
   profile: null,
   rules: [],
+  initialDraft: "",
+  evaluation: "",
   draft: "",
   finalized: false,
   thinking: "",
@@ -72,6 +74,10 @@ function cacheElements() {
     "profileSummary",
     "taskInput",
     "generateBtn",
+    "initialDraftStatus",
+    "initialDraftOutput",
+    "evaluationStatus",
+    "evaluationOutput",
     "draftStatus",
     "draftOutput",
     "thinkingWrap",
@@ -104,6 +110,8 @@ function bindEvents() {
       sources: [],
       profile: null,
       rules: [],
+      initialDraft: "",
+      evaluation: "",
       draft: "",
       finalized: false,
       thinking: "",
@@ -782,12 +790,14 @@ async function generateDraft() {
   const type = document.querySelector('input[name="contentType"]:checked')?.value || "内容";
   await withBusy(els.generateBtn, "正在生成", async () => {
     try {
-      setApiStatus("AI 生成中", "busy");
+      setApiStatus("AI 工作流", "busy");
+      state.initialDraft = "";
+      state.evaluation = "";
       state.draft = "";
       state.finalized = false;
       state.thinking = "";
       renderDraft();
-      await streamApi("/api/generate-stream", {
+      await streamApi("/api/workflow-stream", {
         type,
         task,
         profile: state.profile,
@@ -797,19 +807,29 @@ async function generateDraft() {
           state.thinking += text;
           renderDraft();
         },
-        onContent: (text) => {
+        onDraft: (text) => {
+          state.initialDraft += text;
+          renderDraft();
+        },
+        onEvaluation: (text) => {
+          state.evaluation += text;
+          renderDraft();
+        },
+        onFinal: (text) => {
           state.draft += text;
           renderDraft();
         }
       });
-      state.deliverChat = [{ role: "ai", text: "初稿已生成。可以继续说要改哪里。" }];
+      state.deliverChat = [{ role: "ai", text: "优化稿已生成。可以继续说要改哪里，确认时说“好的”。" }];
       setApiStatus("AI 后台", "online");
     } catch (error) {
       console.warn(error);
+      state.initialDraft = composeDraft(type, task, state.profile, []);
+      state.evaluation = composeEvaluation(state.initialDraft);
       state.draft = composeDraft(type, task, state.profile, state.rules);
       state.finalized = false;
       state.thinking = "";
-      state.deliverChat = [{ role: "ai", text: "初稿已生成。可以继续说要改哪里。" }];
+      state.deliverChat = [{ role: "ai", text: "优化稿已生成。可以继续说要改哪里，确认时说“好的”。" }];
       setApiStatus("本地模式", "offline");
     }
     saveState();
@@ -823,6 +843,17 @@ function composeDraft(type, task, profile, rules) {
   const keywords = profile.keywords.slice(0, 5).map((item) => item.word).join("、") || "表达、内容、读者";
   const ruleText = rules.length ? `\n\n写作规则：${rules.join("；")}。` : "";
   return `标题：先把问题说清楚\n\n${task}\n\n我会先给一个判断：这件事真正重要的，不是把话说得更满，而是让表达更像自己。\n\n如果是做${type}，第一步不是追求复杂，而是确认读者到底在意什么。一个好的内容，通常有三个层次：先提出问题，再给出判断，最后落到一个可执行的建议。\n\n这次内容可以围绕「${keywords}」展开。语气保持${tones}，少一点空泛，多一点具体。不要急着下结论，也不要把每句话都写成口号。\n\n最后留一个轻的互动：你最想保留自己的哪一种表达习惯？${ruleText}`;
+}
+
+function composeEvaluation(draft) {
+  const lengthScore = draft.length > 500 ? 78 : 66;
+  return [
+    `新闻性 / 时效性：${lengthScore}。需要继续补充更具体的当下信息。`,
+    "网络传播价值：72。有明确问题意识，但标题和开头还可以更抓人。",
+    "情绪感染力：70。表达克制，情绪张力可以再集中。",
+    "故事真实感 / 贴近性：74。适合补充个人经历或具体场景。",
+    "信息可靠性：68。涉及事实判断时需要补充来源。"
+  ].join("\n");
 }
 
 async function sendDeliverMessage() {
@@ -982,8 +1013,12 @@ function reviseDraft(draft, instruction) {
 }
 
 function renderDraft() {
+  els.initialDraftStatus.textContent = state.initialDraft ? "已生成" : "等待生成";
+  els.initialDraftOutput.textContent = state.initialDraft || "内容初稿会显示在这里。";
+  els.evaluationStatus.textContent = state.evaluation ? "已评分" : "等待评分";
+  els.evaluationOutput.textContent = state.evaluation || "五维评分会显示在这里。";
   els.draftStatus.textContent = state.finalized ? "最终清洁版" : state.draft ? "已生成" : "等待生成";
-  els.draftOutput.textContent = state.draft || "初稿会显示在这里。";
+  els.draftOutput.textContent = state.draft || "文风优化稿会显示在这里。";
   els.thinkingOutput.textContent = state.thinking || "";
   els.thinkingWrap.hidden = !state.thinking;
 }
@@ -1181,6 +1216,9 @@ function handleSsePart(part, handlers) {
   const data = JSON.parse(dataLines.join("\n"));
   if (event === "thinking") handlers.onThinking?.(data.text || "");
   if (event === "content") handlers.onContent?.(data.text || "");
+  if (event === "draftContent") handlers.onDraft?.(data.text || "");
+  if (event === "evaluationContent") handlers.onEvaluation?.(data.text || "");
+  if (event === "finalContent") handlers.onFinal?.(data.text || "");
   if (event === "error") throw new Error(data.error || "Stream error");
 }
 

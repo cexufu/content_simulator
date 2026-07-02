@@ -221,8 +221,14 @@ input:focus {
 }
 
 .deliver-layout {
-  grid-template-columns: 0.9fr 1.35fr;
+  grid-template-columns: minmax(280px, 0.78fr) minmax(0, 1.45fr);
   align-items: start;
+}
+
+.deliver-side,
+.deliver-results {
+  display: grid;
+  gap: 14px;
 }
 
 .panel {
@@ -580,13 +586,23 @@ input:focus {
 }
 
 .draft {
-  min-height: 320px;
+  min-height: 220px;
   padding: 18px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fffefa;
   line-height: 1.8;
   white-space: pre-wrap;
+}
+
+.draft.compact {
+  min-height: 150px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.draft.final {
+  min-height: 280px;
 }
 
 .thinking-box {
@@ -649,15 +665,16 @@ input:focus {
 
 @media (max-width: 980px) {
   .collect-grid,
-  .profile-layout,
-  .deliver-layout {
+  .profile-layout {
     grid-template-columns: 1fr 1fr;
   }
 
+  .deliver-layout {
+    grid-template-columns: 1fr;
+  }
+
   .source-panel,
-  .wide,
-  .output-panel,
-  .deliver-layout .chat-panel {
+  .wide {
     grid-column: span 2;
   }
 
@@ -687,9 +704,7 @@ input:focus {
   }
 
   .source-panel,
-  .wide,
-  .output-panel,
-  .deliver-layout .chat-panel {
+  .wide {
     grid-column: span 1;
   }
 
