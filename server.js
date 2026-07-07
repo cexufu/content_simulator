@@ -532,6 +532,7 @@ async function generateDraftStream(_req, res, payload) {
   const rules = normalizeRules(payload.rules || profile.rules || []);
   const task = String(payload.task || "").slice(0, 4000);
   const type = String(payload.type || "内容").slice(0, 100);
+  const focusProfile = normalizeFocusProfile(payload.focusProfile || {});
   sendSseHeaders(res);
   try {
     await callChatCompletionsStream({
@@ -577,6 +578,7 @@ async function generateWorkflowStream(_req, res, payload) {
       instructions: [
         "你是 Content Simulator 的内容初稿后台。",
         "先不要模仿用户文风，优先生成有信息量、有角度、有表达创造力的内容初稿。",
+        "请结合 focusProfile 中的关注领域、长期话题、平台偏好和用户补充说明。",
         "可参考公开热榜上下文，但不要编造事实；不确定的信息用谨慎表述。",
         "直接输出完整初稿正文，不要输出 JSON，不要输出 Markdown 代码块。"
       ].join("\n"),
@@ -584,6 +586,7 @@ async function generateWorkflowStream(_req, res, payload) {
         task: "生成内容初稿",
         contentType: type,
         userTask: task,
+        focusProfile,
         trendContext
       }),
       onThinking: (text) => writeSse(res, "thinking", { text }),
@@ -619,6 +622,7 @@ async function generateWorkflowStream(_req, res, payload) {
       instructions: [
         "你是 Content Simulator 的文风优化后台。",
         "请基于初稿和五维评分进行二次优化，同时贴近用户已确认的文风画像。",
+        "请继续贴合 focusProfile 中的关注领域、长期话题、平台偏好和用户补充说明。",
         "必须参考 profile 中的常用词、文本风格、节点话术、口头禅、额外规则。",
         "保留初稿中有价值的信息和角度，提升网感、可读性和传播性。",
         "不要解释优化过程，直接输出完整可交付稿件正文，不要输出 JSON，不要输出 Markdown 代码块。"
@@ -630,6 +634,7 @@ async function generateWorkflowStream(_req, res, payload) {
         initialDraft,
         evaluation,
         profile,
+        focusProfile,
         rules
       }),
       onThinking: (text) => writeSse(res, "thinking", { text }),
@@ -913,6 +918,15 @@ function normalizeSources(sources) {
 
 function hasReadableSources(sources) {
   return sources.some((source) => source.body && !source.limited);
+}
+
+function normalizeFocusProfile(focusProfile) {
+  return {
+    domains: normalizeList(focusProfile.domains, ["内容创作"]).slice(0, 6),
+    topics: normalizeList(focusProfile.topics, ["选题", "表达", "传播"]).slice(0, 10),
+    platforms: normalizeList(focusProfile.platforms, ["通用内容平台"]).slice(0, 6),
+    notes: String(focusProfile.notes || "").slice(0, 1000)
+  };
 }
 
 function normalizeProfile(profile, rules = []) {

@@ -42,7 +42,7 @@
         </button>
         <button class="step" data-step="deliver">
           <span>03</span>
-          成稿交付
+          内容工作台
         </button>
       </nav>
 
@@ -170,6 +170,16 @@
 
           <section class="panel wide">
             <div class="panel-title">
+              <h3>关注画像</h3>
+              <span>领域/话题/读者</span>
+            </div>
+            <div class="chips" id="focusTags"></div>
+            <textarea id="focusInput" rows="4" placeholder="补充你长期关注的领域、常写话题、目标读者、平台偏好或不想写的方向。"></textarea>
+            <button class="secondary" id="saveFocusBtn">保存关注画像</button>
+          </section>
+
+          <section class="panel wide">
+            <div class="panel-title">
               <h3>额外规则</h3>
               <span>你说了算</span>
             </div>
@@ -198,11 +208,50 @@
 
       <section class="view" id="deliverView">
         <div class="page-head">
-          <p class="eyebrow">成稿交付区</p>
-          <h2>开始写新的内容</h2>
-          <p>输入主题和要求，它会按确认后的风格生成。</p>
+          <p class="eyebrow">内容工作台</p>
+          <h2>内容工作台</h2>
+          <p>先看信息，再找选题，深入钻探，最后生成内容。</p>
         </div>
 
+        <section class="panel related-panel">
+          <div class="panel-title">
+            <h3>相关信息</h3>
+            <span>基于关注画像自动推荐</span>
+          </div>
+          <div class="insight-list" id="relatedInfoList"></div>
+        </section>
+
+        <div class="workbench-tabs">
+          <button class="workbench-tab active" data-workbench="hotspot">热点选题</button>
+          <button class="workbench-tab" data-workbench="research">话题钻探</button>
+          <button class="workbench-tab" data-workbench="produce">内容生产</button>
+        </div>
+
+        <section class="workbench-panel active" id="hotspotPanel" data-panel="hotspot">
+          <div class="panel">
+            <div class="panel-title">
+              <h3>热点选题</h3>
+              <span>热点 + 关注画像</span>
+            </div>
+            <div class="topic-grid" id="hotspotList"></div>
+          </div>
+        </section>
+
+        <section class="workbench-panel" id="researchPanel" data-panel="research">
+          <div class="panel">
+            <div class="panel-title">
+              <h3>话题钻探</h3>
+              <span>找差异化切口</span>
+            </div>
+            <div class="research-row">
+              <input id="researchInput" type="text" placeholder="输入想钻探的话题，例如：中小微企业发展的烟火人间" />
+              <button class="secondary" id="researchBtn">开始钻探</button>
+            </div>
+            <div class="research-output" id="researchOutput"></div>
+          </div>
+        </section>
+
+        <section class="workbench-panel" id="producePanel" data-panel="produce">
         <div class="deliver-layout">
           <div class="deliver-side">
             <section class="panel">
@@ -279,6 +328,7 @@
             </section>
           </div>
         </div>
+        </section>
       </section>
     </main>
 

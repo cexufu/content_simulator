@@ -11,6 +11,9 @@ const state = {
   sources: [],
   profile: null,
   rules: [],
+  focusNotes: "",
+  currentWorkbench: "hotspot",
+  selectedTopic: "",
   initialDraft: "",
   evaluation: "",
   draft: "",
@@ -64,6 +67,9 @@ function cacheElements() {
     "textFeatures",
     "speechPatterns",
     "trafficFeatures",
+    "focusTags",
+    "focusInput",
+    "saveFocusBtn",
     "rulesInput",
     "saveRulesBtn",
     "ruleTags",
@@ -74,6 +80,11 @@ function cacheElements() {
     "profileSummary",
     "taskInput",
     "generateBtn",
+    "relatedInfoList",
+    "hotspotList",
+    "researchInput",
+    "researchBtn",
+    "researchOutput",
     "initialDraftStatus",
     "initialDraftOutput",
     "evaluationStatus",
@@ -110,6 +121,9 @@ function bindEvents() {
       sources: [],
       profile: null,
       rules: [],
+      focusNotes: "",
+      currentWorkbench: "hotspot",
+      selectedTopic: "",
       initialDraft: "",
       evaluation: "",
       draft: "",
@@ -130,6 +144,7 @@ function bindEvents() {
   bindDropzone();
   els.addUrlBtn.addEventListener("click", () => addUrlSource());
   els.analyzeBtn.addEventListener("click", () => analyzeAndGo());
+  els.saveFocusBtn.addEventListener("click", saveFocusNotes);
   els.saveRulesBtn.addEventListener("click", saveRulesFromInput);
   els.profileChatBtn.addEventListener("click", () => sendProfileMessage());
   els.profileChatInput.addEventListener("keydown", (event) => {
@@ -141,6 +156,10 @@ function bindEvents() {
     goStep("deliver");
   });
   els.generateBtn.addEventListener("click", () => generateDraft());
+  document.querySelectorAll(".workbench-tab").forEach((button) => {
+    button.addEventListener("click", () => setWorkbench(button.dataset.workbench));
+  });
+  els.researchBtn.addEventListener("click", () => runTopicResearch(els.researchInput.value.trim()));
   els.deliverChatBtn.addEventListener("click", () => sendDeliverMessage());
   els.deliverChatInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter") sendDeliverMessage();
@@ -172,6 +191,7 @@ function renderAll() {
   renderStep();
   renderSources();
   renderProfile();
+  renderWorkbench();
   renderChats();
   renderDraft();
 }
@@ -600,8 +620,10 @@ function renderProfile() {
   renderFeatureList(els.textFeatures, profile.textFeatures);
   renderFeatureList(els.speechPatterns, profile.speechPatterns || buildSpeechPatterns(""));
   renderFeatureList(els.trafficFeatures, profile.trafficFeatures);
+  renderFocusProfile(profile);
   renderRules();
   renderSummary(profile);
+  renderWorkbench();
 }
 
 function renderEmptyProfile() {
@@ -614,11 +636,206 @@ function renderEmptyProfile() {
   renderFeatureList(els.textFeatures, ["请粘贴文章正文、口播稿或上传 txt / md / html"]);
   renderFeatureList(els.speechPatterns, ["补充正文后分析开场、结尾、转场和口头禅"]);
   renderFeatureList(els.trafficFeatures, ["动态网页需要公开正文或专门连接器"]);
+  renderFocusProfile(null);
   renderRules();
   els.profileSummary.innerHTML = `
     <div class="summary-line"><strong>状态：</strong>还没有形成可确认的风格画像。</div>
     <div class="summary-line"><strong>处理：</strong>回到原稿收集区，补充正文后再开始读稿。</div>
   `;
+}
+
+function renderFocusProfile(profile) {
+  const focus = getFocusContext(profile);
+  const tags = [
+    ...focus.domains.map((item) => `领域：${item}`),
+    ...focus.topics.map((item) => `话题：${item}`),
+    ...focus.platforms.map((item) => `平台：${item}`)
+  ].slice(0, 12);
+  els.focusTags.innerHTML = tags.length
+    ? tags.map((tag) => `<span class="chip">${escapeHtml(tag)}</span>`).join("")
+    : '<span class="chip">等待补充关注方向</span>';
+  if (document.activeElement !== els.focusInput) {
+    els.focusInput.value = state.focusNotes || "";
+  }
+}
+
+function getFocusContext(profile = state.profile) {
+  const safeProfile = profile || {};
+  const domains = (safeProfile.domains || []).slice(0, 3).map((item) => item.name).filter(Boolean);
+  const topics = (safeProfile.keywords || []).slice(0, 6).map((item) => item.word).filter(Boolean);
+  const sourceText = state.sources.map((source) => `${source.title} ${source.body || ""}`).join(" ");
+  const platforms = [];
+  if (/公众号|微信/.test(sourceText)) platforms.push("公众号");
+  if (/小红书/.test(sourceText)) platforms.push("小红书");
+  if (/口播|短视频|抖音/.test(sourceText)) platforms.push("口播/短视频");
+  return {
+    domains: domains.length ? domains : ["内容创作"],
+    topics: topics.length ? topics : ["选题", "表达", "传播"],
+    platforms: platforms.length ? platforms : ["通用内容平台"],
+    notes: state.focusNotes || ""
+  };
+}
+
+function saveFocusNotes() {
+  state.focusNotes = els.focusInput.value.trim();
+  saveState();
+  renderFocusProfile(state.profile);
+  renderWorkbench();
+}
+
+function setWorkbench(name) {
+  state.currentWorkbench = name || "hotspot";
+  saveState();
+  renderWorkbench();
+}
+
+function renderWorkbench() {
+  if (!els.relatedInfoList) return;
+  const current = state.currentWorkbench || "hotspot";
+  document.querySelectorAll(".workbench-tab").forEach((button) => {
+    button.classList.toggle("active", button.dataset.workbench === current);
+  });
+  document.querySelectorAll(".workbench-panel").forEach((panel) => {
+    panel.classList.toggle("active", panel.dataset.panel === current);
+  });
+  renderRelatedInfo();
+  renderHotspotTopics();
+  if (!els.researchOutput.innerHTML.trim()) {
+    renderTopicResearch(state.selectedTopic || "");
+  }
+}
+
+function renderRelatedInfo() {
+  const focus = getFocusContext();
+  const items = [
+    {
+      source: "公开新闻检索",
+      title: `${focus.topics[0]} 相关新闻`,
+      body: `查看「${focus.topics[0]}」近期新闻、公共讨论和背景信息。`,
+      url: buildNewsSearchUrl(`${focus.topics[0]} 新闻`)
+    },
+    {
+      source: "领域动态",
+      title: `${focus.domains[0]} 行业动态`,
+      body: `围绕「${focus.domains[0]}」补充行业变化、案例和趋势材料。`,
+      url: buildNewsSearchUrl(`${focus.domains[0]} 行业动态`)
+    },
+    {
+      source: "热榜入口",
+      title: "今日热点与平台讨论",
+      body: "查看全网热榜，判断今天有哪些公共议题和平台情绪。",
+      url: "https://tophub.today/"
+    }
+  ];
+  els.relatedInfoList.innerHTML = items
+    .map(
+      (item) => `
+        <a class="news-card" href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">
+          <span>${escapeHtml(item.source)}</span>
+          <strong>${escapeHtml(item.title)}</strong>
+          <p>${escapeHtml(item.body)}</p>
+        </a>
+      `
+    )
+    .join("");
+}
+
+function buildNewsSearchUrl(query) {
+  return `https://www.baidu.com/s?wd=${encodeURIComponent(query)}`;
+}
+
+function renderHotspotTopics() {
+  const focus = getFocusContext();
+  const topics = buildHotspotTopics(focus);
+  els.hotspotList.innerHTML = topics
+    .map(
+      (item) => `
+        <div class="topic-item">
+          <strong>${escapeHtml(item.title)}</strong>
+          <p>${escapeHtml(item.body)}</p>
+          <div class="topic-actions">
+            <button class="ghost small" data-research-topic="${escapeHtml(item.title)}">钻探</button>
+            <button class="ghost small" data-use-topic="${escapeHtml(item.title)}">写这个</button>
+          </div>
+        </div>
+      `
+    )
+    .join("");
+  els.hotspotList.querySelectorAll("[data-research-topic]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.selectedTopic = button.dataset.researchTopic;
+      els.researchInput.value = state.selectedTopic;
+      setWorkbench("research");
+      runTopicResearch(state.selectedTopic);
+    });
+  });
+  els.hotspotList.querySelectorAll("[data-use-topic]").forEach((button) => {
+    button.addEventListener("click", () => {
+      useTopicForProduction(button.dataset.useTopic);
+    });
+  });
+}
+
+function buildHotspotTopics(focus) {
+  const primary = focus.topics[0] || "内容";
+  const domain = focus.domains[0] || "内容创作";
+  return [
+    {
+      title: `${primary}里的新变化`,
+      body: `适合从近期变化、用户体感和具体案例切入，做一条稳妥选题。`
+    },
+    {
+      title: `${domain}的烟火气故事`,
+      body: "把宏观议题落到具体人、具体场景和具体选择上。"
+    },
+    {
+      title: `一个被忽略的${primary}问题`,
+      body: "避开大家都在写的角度，找反常识、低声量但高共鸣的切口。"
+    },
+    {
+      title: `${primary}和当下情绪`,
+      body: "结合季节、节日、社会情绪和平台讨论，做更有网感的表达。"
+    }
+  ];
+}
+
+function runTopicResearch(topic) {
+  const currentTopic = topic || state.selectedTopic || getFocusContext().topics[0] || "当前话题";
+  state.selectedTopic = currentTopic;
+  saveState();
+  renderTopicResearch(currentTopic);
+}
+
+function renderTopicResearch(topic) {
+  const currentTopic = topic || state.selectedTopic || "先选择或输入一个话题";
+  const blocks = [
+    {
+      title: "谁做过了",
+      body: `同类内容通常会围绕「${currentTopic}」的热点事实、经验总结、情绪共鸣来写。`
+    },
+    {
+      title: "为什么容易火",
+      body: "容易火的内容往往有明确冲突、具体人物、强场景和可转述的观点。"
+    },
+    {
+      title: "还缺什么角度",
+      body: "可以找更小的人群、更真实的细节、更长期的问题，避开只复述热点。"
+    },
+    {
+      title: "建议切入口",
+      body: `从「一个具体人/一件具体事/一个被忽略的变化」切入，再结合你的文风展开。`
+    }
+  ];
+  els.researchOutput.innerHTML = blocks
+    .map((item) => `<div class="research-block"><strong>${escapeHtml(item.title)}</strong><p>${escapeHtml(item.body)}</p></div>`)
+    .join("");
+}
+
+function useTopicForProduction(topic) {
+  const text = `围绕「${topic}」写一篇内容。要求：有具体切口，不要泛泛而谈，最后输出适合我风格的版本。`;
+  els.taskInput.value = text;
+  state.selectedTopic = topic;
+  setWorkbench("produce");
 }
 
 function renderRadar(tones) {
@@ -762,6 +979,8 @@ async function sendProfileMessage() {
   renderChats();
   renderRules();
   renderSummary(state.profile || analyzeSources(state.sources, state.rules));
+  renderFocusProfile(state.profile);
+  renderWorkbench();
 }
 
 function renderChats() {
@@ -801,6 +1020,7 @@ async function generateDraft() {
         type,
         task,
         profile: state.profile,
+        focusProfile: getFocusContext(),
         rules: state.rules
       }, {
         onThinking: (text) => {

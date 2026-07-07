@@ -231,6 +231,116 @@ input:focus {
   gap: 14px;
 }
 
+.related-panel {
+  margin-bottom: 14px;
+}
+
+.insight-list,
+.topic-grid,
+.research-output {
+  display: grid;
+  gap: 10px;
+}
+
+.insight-list {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.topic-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.insight-item,
+.news-card,
+.topic-item,
+.research-block {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fffefa;
+  padding: 13px;
+  line-height: 1.6;
+}
+
+.insight-item strong,
+.news-card strong,
+.topic-item strong,
+.research-block strong {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.insight-item p,
+.news-card p,
+.topic-item p,
+.research-block p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.news-card {
+  color: var(--ink);
+  text-decoration: none;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.news-card:hover {
+  border-color: var(--green);
+  transform: translateY(-1px);
+}
+
+.news-card span {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--green);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.topic-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.workbench-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 14px;
+  flex-wrap: wrap;
+}
+
+.workbench-tab {
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fffefa;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.workbench-tab.active {
+  border-color: var(--green);
+  color: var(--green);
+  background: var(--green-soft);
+}
+
+.workbench-panel {
+  display: none;
+}
+
+.workbench-panel.active {
+  display: block;
+}
+
+.research-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
 .panel {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -673,6 +783,11 @@ input:focus {
     grid-template-columns: 1fr;
   }
 
+  .insight-list,
+  .topic-grid {
+    grid-template-columns: 1fr;
+  }
+
   .source-panel,
   .wide {
     grid-column: span 2;
@@ -718,6 +833,10 @@ input:focus {
   }
 
   .chat-row {
+    grid-template-columns: 1fr;
+  }
+
+  .research-row {
     grid-template-columns: 1fr;
   }
 
