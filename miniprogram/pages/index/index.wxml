@@ -175,8 +175,7 @@
         <text class="panel-title">热点选题</text>
         <text class="panel-sub">真实热点 / Top4</text>
       </view>
-      <textarea class="textarea small" value="{{hotspotKeywordInput}}" placeholder="补充关注话题，可留空使用已确认画像" bindinput="onHotspotInput"></textarea>
-      <button class="secondary" loading="{{hotspotLoading}}" bindtap="generateHotspotTopics">生成 Top4</button>
+      <button class="secondary" loading="{{hotspotLoading}}" bindtap="generateHotspotTopics">生成热点选题</button>
       <text class="topic-status">{{hotspotStatus}}</text>
       <view wx:for="{{hotspotTopics}}" wx:key="title" class="topic">
         <text class="topic-title">{{item.title}}</text>

@@ -33,9 +33,8 @@ Page({
     profileChat: [],
     workbenchTab: "hotspot",
     relatedInfo: [],
-    hotspotKeywordInput: "",
     hotspotTopics: [],
-    hotspotStatus: "未生成前只展示流程，不输出默认选题。",
+    hotspotStatus: "基于已确认画像生成；没有真实选题前不展示卡片。",
     researchInput: "",
     researchBlocks: [],
     selectedTopic: "",
@@ -138,9 +137,8 @@ Page({
           profileChat: [],
           workbenchTab: "hotspot",
           relatedInfo: [],
-          hotspotKeywordInput: "",
-          hotspotTopics: buildHotspotTopics(),
-          hotspotStatus: "未生成前只展示流程，不输出默认选题。",
+          hotspotTopics: [],
+          hotspotStatus: "基于已确认画像生成；没有真实选题前不展示卡片。",
           researchInput: "",
           researchBlocks: [],
           selectedTopic: "",
@@ -341,7 +339,7 @@ Page({
         currentStep: "profile",
         apiStatus: "AI 后台",
         apiStatusMode: "online",
-        hotspotTopics: buildHotspotTopics(),
+        hotspotTopics: [],
         hotspotStatus: "画像已更新，可以生成新的热点选题。"
       });
       this.refreshDerivedData();
@@ -392,7 +390,7 @@ Page({
         profileChat: this.data.profileChat.concat({ role: "ai", text: result.reply || "已按你的反馈校准。" }),
         apiStatus: "AI 后台",
         apiStatusMode: "online",
-        hotspotTopics: buildHotspotTopics(),
+        hotspotTopics: [],
         hotspotStatus: "画像已校准，可以重新生成热点选题。"
       });
       this.refreshDerivedData();
@@ -443,23 +441,18 @@ Page({
     this.saveState();
   },
 
-  onHotspotInput(event) {
-    this.setData({ hotspotKeywordInput: event.detail.value });
-  },
-
   async generateHotspotTopics() {
-    const keywords = String(this.data.hotspotKeywordInput || "").trim();
     if (this.data.hotspotLoading) return;
-    if (!this.hasHotspotSignal(keywords)) {
+    if (!this.hasHotspotSignal()) {
       this.setData({
-        hotspotTopics: buildHotspotTopics(),
-        hotspotStatus: "请先确认风格画像，或输入关注话题/关键词。"
+        hotspotTopics: [],
+        hotspotStatus: "请先在文本风格确认区补充关注方向，再生成热点选题。"
       });
       return;
     }
     this.setData({
       hotspotLoading: true,
-      hotspotTopics: buildHotspotTopics(),
+      hotspotTopics: [],
       hotspotStatus: "正在读取 TopHub 和公开搜索...",
       apiStatus: "读取热点",
       apiStatusMode: "busy"
@@ -469,12 +462,12 @@ Page({
         profile: this.data.profile,
         focusProfile: this.getFocusContext(),
         rules: this.data.rules,
-        keywords
+        keywords: ""
       }, { timeout: 90000 });
       const topics = (result.topics || []).map(formatHotspotTopicForMini);
       const sourceCount = result.sourceCount || {};
       this.setData({
-        hotspotTopics: topics.length ? topics : buildHotspotTopics(),
+        hotspotTopics: topics,
         hotspotStatus: topics.length
           ? `已生成 Top${topics.length}。来源：TopHub ${sourceCount.topHub || 0} 条 / 搜索 ${sourceCount.search || 0} 条。`
           : (result.message || "没有读取到可核验热点，暂不生成选题。"),
@@ -483,7 +476,7 @@ Page({
       });
     } catch (error) {
       this.setData({
-        hotspotTopics: buildHotspotTopics(),
+        hotspotTopics: [],
         hotspotStatus: error.message || "热点选题生成失败。",
         apiStatus: "热点失败",
         apiStatusMode: "offline"
@@ -493,15 +486,15 @@ Page({
     }
   },
 
-  hasHotspotSignal(keywords) {
+  hasHotspotSignal() {
     const focus = this.getFocusContext();
-    return Boolean(keywords || focus.notes || focus.domains.length || focus.topics.length);
+    return Boolean(focus.notes || focus.domains.length || focus.topics.length);
   },
 
   resetHotspotResults(status) {
     this.setData({
-      hotspotTopics: buildHotspotTopics(),
-      hotspotStatus: status || "未生成前只展示流程，不输出默认选题。"
+      hotspotTopics: [],
+      hotspotStatus: status || "基于已确认画像生成；没有真实选题前不展示卡片。"
     });
   },
 
@@ -733,7 +726,7 @@ Page({
         ...focus.platforms.map((item) => `平台：${item}`)
       ].slice(0, 12),
       relatedInfo: buildRelatedInfo(focus),
-      hotspotTopics: buildHotspotTopics(),
+      hotspotTopics: this.data.hotspotTopics,
       researchBlocks: this.data.researchBlocks,
       draftStatus: this.data.finalized ? "最终清洁版" : this.data.draft ? "已生成" : "等待生成"
     });
@@ -775,31 +768,6 @@ function buildRelatedInfo(focus) {
       title: "今日热点与平台讨论",
       body: "复制关键词后在浏览器或平台搜索。",
       query: "今日热点 平台热榜"
-    }
-  ];
-}
-
-function buildHotspotTopics() {
-  return [
-    {
-      title: "1. 先确认用户输入",
-      body: "读取用户旧稿、关注画像、平台方向、目标读者和本次任务；信息不足时停留等待，不输出默认选题。",
-      framework: true
-    },
-    {
-      title: "2. 双渠道收集热点",
-      body: "同时读取 TopHub 和公开搜索，两个渠道平级处理；保留来源、时间、热度或可核验依据。",
-      framework: true
-    },
-    {
-      title: "3. 结合用户画像筛选",
-      body: "按领域契合、平台适配、受众相关性、传播价值、风险程度过滤，只留下适合该用户的真实选题。",
-      framework: true
-    },
-    {
-      title: "4. 输出选题池",
-      body: "每个选题应包含话题标题、来源、热度/依据、推荐切口、适配理由和风险提示。",
-      framework: true
     }
   ];
 }

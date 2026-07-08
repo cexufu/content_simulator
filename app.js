@@ -15,9 +15,8 @@ const state = {
   focusNotes: "",
   currentWorkbench: "hotspot",
   selectedTopic: "",
-  hotspotKeywords: "",
   hotspotTopics: [],
-  hotspotStatus: "未生成前只展示流程，不输出默认选题。",
+  hotspotStatus: "基于已确认画像生成；没有真实选题前不展示卡片。",
   hotspotMeta: null,
   initialDraft: "",
   evaluation: "",
@@ -86,7 +85,6 @@ function cacheElements() {
     "taskInput",
     "generateBtn",
     "relatedInfoList",
-    "hotspotInput",
     "hotspotGenerateBtn",
     "hotspotStatus",
     "hotspotList",
@@ -132,9 +130,8 @@ function bindEvents() {
       focusNotes: "",
       currentWorkbench: "hotspot",
       selectedTopic: "",
-      hotspotKeywords: "",
       hotspotTopics: [],
-      hotspotStatus: "未生成前只展示流程，不输出默认选题。",
+      hotspotStatus: "基于已确认画像生成；没有真实选题前不展示卡片。",
       hotspotMeta: null,
       initialDraft: "",
       evaluation: "",
@@ -169,9 +166,6 @@ function bindEvents() {
   });
   els.generateBtn.addEventListener("click", () => generateDraft());
   els.hotspotGenerateBtn.addEventListener("click", () => generateHotspotTopics());
-  els.hotspotInput.addEventListener("input", () => {
-    state.hotspotKeywords = els.hotspotInput.value.trim();
-  });
   els.hotspotList.addEventListener("click", (event) => {
     const button = event.target.closest("[data-topic-action]");
     if (!button) return;
@@ -769,46 +763,12 @@ function buildNewsSearchUrl(query) {
 }
 
 function renderHotspotTopics() {
-  if (els.hotspotInput && document.activeElement !== els.hotspotInput) {
-    els.hotspotInput.value = state.hotspotKeywords || "";
-  }
   if (els.hotspotStatus) {
     const meta = state.hotspotMeta?.sourceCount;
     const sourceText = meta ? ` 来源：TopHub ${meta.topHub || 0} 条 / 搜索 ${meta.search || 0} 条。` : "";
-    els.hotspotStatus.textContent = `${state.hotspotStatus || "未生成前只展示流程，不输出默认选题。"}${sourceText}`;
+    els.hotspotStatus.textContent = `${state.hotspotStatus || "基于已确认画像生成；没有真实选题前不展示卡片。"}${sourceText}`;
   }
-  const topics = state.hotspotTopics.length ? state.hotspotTopics : buildHotspotTopics();
-  els.hotspotList.innerHTML = topics.map((item, index) => item.framework ? renderHotspotFramework(item) : renderHotspotCard(item, index)).join("");
-}
-
-function buildHotspotTopics() {
-  return [
-    {
-      title: "1. 先确认用户输入",
-      body: "读取用户旧稿、关注画像、平台方向、目标读者和本次任务；信息不足时停留等待，不输出默认选题。"
-    },
-    {
-      title: "2. 双渠道收集热点",
-      body: "同时读取 TopHub 和公开搜索，两个渠道平级处理；保留来源、时间、热度或可核验依据。"
-    },
-    {
-      title: "3. 结合用户画像筛选",
-      body: "按领域契合、平台适配、受众相关性、传播价值、风险程度过滤，只留下适合该用户的真实选题。"
-    },
-    {
-      title: "4. 输出选题池",
-      body: "每个选题应包含话题标题、来源、热度/依据、推荐切口、适配理由和风险提示。"
-    }
-  ];
-}
-
-function renderHotspotFramework(item) {
-  return `
-    <div class="topic-item">
-      <strong>${escapeHtml(item.title)}</strong>
-      <p>${escapeHtml(item.body)}</p>
-    </div>
-  `;
+  els.hotspotList.innerHTML = state.hotspotTopics.map((item, index) => renderHotspotCard(item, index)).join("");
 }
 
 function renderHotspotCard(item, index) {
@@ -846,11 +806,9 @@ function renderHotspotCard(item, index) {
 }
 
 async function generateHotspotTopics() {
-  const keywords = (els.hotspotInput.value || "").trim();
-  state.hotspotKeywords = keywords;
-  if (!hasHotspotSignal(keywords)) {
+  if (!hasHotspotSignal()) {
     state.hotspotTopics = [];
-    state.hotspotStatus = "请先确认风格画像，或输入关注话题/关键词。";
+    state.hotspotStatus = "请先在文本风格确认区补充关注方向，再生成热点选题。";
     state.hotspotMeta = null;
     renderHotspotTopics();
     return;
@@ -864,7 +822,7 @@ async function generateHotspotTopics() {
         profile: state.profile || {},
         focusProfile: getFocusContext(),
         rules: state.rules,
-        keywords
+        keywords: ""
       });
       state.hotspotTopics = Array.isArray(result.topics) ? result.topics : [];
       state.hotspotMeta = {
@@ -887,10 +845,9 @@ async function generateHotspotTopics() {
   });
 }
 
-function hasHotspotSignal(keywords) {
+function hasHotspotSignal() {
   const focus = getFocusContext();
   return Boolean(
-    keywords ||
     focus.notes ||
     focus.domains.length ||
     focus.topics.length
@@ -900,7 +857,7 @@ function hasHotspotSignal(keywords) {
 function resetHotspotResults(status) {
   state.hotspotTopics = [];
   state.hotspotMeta = null;
-  state.hotspotStatus = status || "未生成前只展示流程，不输出默认选题。";
+  state.hotspotStatus = status || "基于已确认画像生成；没有真实选题前不展示卡片。";
 }
 
 function runTopicResearch(topic) {

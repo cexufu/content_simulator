@@ -233,11 +233,10 @@
               <h3>热点选题</h3>
               <span>真实热点 / Top4</span>
             </div>
-            <div class="topic-control">
-              <input id="hotspotInput" type="text" placeholder="补充关注话题，可留空使用已确认画像" />
-              <button class="secondary" id="hotspotGenerateBtn">生成 Top4</button>
+            <div class="topic-control single">
+              <button class="secondary" id="hotspotGenerateBtn">生成热点选题</button>
             </div>
-            <div class="topic-status" id="hotspotStatus">未生成前只展示流程，不输出默认选题。</div>
+            <div class="topic-status" id="hotspotStatus">基于已确认画像生成；没有真实选题前不展示卡片。</div>
             <div class="topic-grid" id="hotspotList"></div>
           </div>
         </section>
