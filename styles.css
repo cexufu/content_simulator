@@ -246,6 +246,20 @@ input:focus {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.topic-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.topic-status {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .topic-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
@@ -301,6 +315,50 @@ input:focus {
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 12px;
+}
+
+.topic-result {
+  position: relative;
+  display: grid;
+  gap: 8px;
+}
+
+.topic-result p {
+  font-size: 14px;
+}
+
+.topic-result b {
+  color: var(--ink);
+}
+
+.topic-rank {
+  color: var(--green);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.topic-score-row,
+.topic-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.topic-score-row span,
+.topic-sources a {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: #f8f3e8;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  text-decoration: none;
+}
+
+.topic-sources a:hover {
+  border-color: var(--green);
+  color: var(--green);
 }
 
 .workbench-tabs {
@@ -785,6 +843,10 @@ input:focus {
 
   .insight-list,
   .topic-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .topic-control {
     grid-template-columns: 1fr;
   }
 

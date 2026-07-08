@@ -1,0 +1,262 @@
+<view class="page">
+  <view class="hero">
+    <view>
+      <text class="eyebrow">内容工作台</text>
+      <text class="title">Content Simulator</text>
+    </view>
+    <view class="status {{apiStatusMode}}">{{apiStatus}}</view>
+  </view>
+
+  <view wx:if="{{showConsent}}" class="modal-mask">
+    <view class="modal">
+      <text class="modal-title">使用说明</text>
+      <text class="modal-text">本工具用于内容学习和稿件生成。你提交的材料会发送到后台和模型服务处理，仅用于本次内容分析与生成。</text>
+      <text class="modal-note">请勿上传敏感隐私、商业机密或未经授权内容。成稿发布前请人工核验。</text>
+      <button class="ghost full" bindtap="openPrivacyPage">查看隐私说明</button>
+      <button class="primary full" bindtap="acceptConsent">我知道了</button>
+    </view>
+  </view>
+
+  <view class="tabs">
+    <view class="tab {{currentStep === 'collect' ? 'active' : ''}}" data-step="collect" bindtap="goStep">原稿</view>
+    <view class="tab {{currentStep === 'profile' ? 'active' : ''}}" data-step="profile" bindtap="goStep">画像</view>
+    <view class="tab {{currentStep === 'workbench' ? 'active' : ''}}" data-step="workbench" bindtap="goStep">工作台</view>
+  </view>
+  <button class="ghost clear-btn" bindtap="clearLocalData">清空本地缓存</button>
+
+  <view wx:if="{{currentStep === 'collect'}}" class="section">
+    <view class="panel">
+      <view class="panel-head">
+        <text class="panel-title">粘贴原稿</text>
+        <text class="panel-sub">文章 / 口播 / 文案</text>
+      </view>
+      <textarea class="textarea" value="{{textInput}}" maxlength="-1" auto-height placeholder="把希望 AI 学习的内容粘贴在这里" bindinput="onTextInput"></textarea>
+      <button class="primary" bindtap="addTextSource">加入原稿</button>
+    </view>
+
+    <view class="panel">
+      <view class="panel-head">
+        <text class="panel-title">读取链接</text>
+        <text class="panel-sub">新闻 / 文章 / 抖音链接</text>
+      </view>
+      <input class="input" value="{{urlInput}}" placeholder="粘贴公开链接" bindinput="onUrlInput" />
+      <button class="secondary" loading="{{urlLoading}}" bindtap="addUrlSource">读取链接</button>
+      <text class="hint">抖音主页通常只能记录链接，需要补充作品文案或互动数据。</text>
+    </view>
+
+    <view class="panel">
+      <view class="panel-head">
+        <text class="panel-title">上传文件</text>
+        <text class="panel-sub">Word / TXT / HTML</text>
+      </view>
+      <button class="secondary" loading="{{fileLoading}}" bindtap="chooseFiles">选择文件</button>
+      <text class="hint">支持从微信聊天或本机文件选择。PDF 和旧版 DOC 可能需要补充正文。</text>
+    </view>
+
+    <view class="panel">
+      <view class="panel-head">
+        <text class="panel-title">已加入</text>
+        <text class="panel-sub">{{sources.length}} 条材料</text>
+      </view>
+      <view wx:if="{{!sources.length}}" class="empty">还没有材料</view>
+      <view wx:for="{{sources}}" wx:key="id" class="source">
+        <view>
+          <text class="source-title">{{item.title}}</text>
+          <text class="source-meta">{{item.type}} · {{item.status}}</text>
+        </view>
+        <button class="ghost tiny" data-id="{{item.id}}" bindtap="removeSource">删除</button>
+      </view>
+      <button class="primary" loading="{{analyzeLoading}}" bindtap="analyzeProfile">开始读稿</button>
+    </view>
+  </view>
+
+  <view wx:if="{{currentStep === 'profile'}}" class="section">
+    <view class="panel">
+      <view class="panel-head">
+        <text class="panel-title">文本风格确认</text>
+        <text class="panel-sub">置信度：{{profile.confidence || '待学习'}}</text>
+      </view>
+      <view class="score-grid">
+        <view wx:for="{{toneItems}}" wx:key="name" class="score-item">
+          <view class="score-line">
+            <text>{{item.name}}</text>
+            <text>{{item.value}}</text>
+          </view>
+          <view class="bar"><view class="bar-fill" style="width: {{item.value}}%;"></view></view>
+        </view>
+      </view>
+    </view>
+
+    <view class="panel">
+      <view class="panel-head">
+        <text class="panel-title">关注画像</text>
+        <text class="panel-sub">可手动补充</text>
+      </view>
+      <view class="chips">
+        <text wx:for="{{focusTags}}" wx:key="*this" class="chip">{{item}}</text>
+      </view>
+      <textarea class="textarea small" value="{{focusNotes}}" placeholder="补充你的关注领域、长期话题、平台方向" bindinput="onFocusInput"></textarea>
+      <button class="secondary" bindtap="saveFocusNotes">保存关注画像</button>
+    </view>
+
+    <view class="panel">
+      <view class="panel-head">
+        <text class="panel-title">特征摘要</text>
+        <text class="panel-sub">常用词 / 话术 / 内容特征</text>
+      </view>
+      <view class="chips">
+        <text wx:for="{{keywordTags}}" wx:key="*this" class="chip">{{item}}</text>
+      </view>
+      <view class="feature-block">
+        <text class="block-title">内容特征</text>
+        <text wx:for="{{profile.contentFeatures}}" wx:key="*this" class="feature">· {{item}}</text>
+      </view>
+      <view class="feature-block">
+        <text class="block-title">文本风格</text>
+        <text wx:for="{{profile.textFeatures}}" wx:key="*this" class="feature">· {{item}}</text>
+      </view>
+      <view class="feature-block">
+        <text class="block-title">节点与口头禅</text>
+        <text wx:for="{{profile.speechPatterns}}" wx:key="*this" class="feature">· {{item}}</text>
+      </view>
+    </view>
+
+    <view class="panel">
+      <view class="panel-head">
+        <text class="panel-title">额外规则</text>
+        <text class="panel-sub">你说了算</text>
+      </view>
+      <textarea class="textarea small" value="{{rulesInput}}" placeholder="例如：不要太营销。标题不要夸张。" bindinput="onRulesInput"></textarea>
+      <button class="secondary" bindtap="saveRules">记住规则</button>
+      <view class="chips">
+        <text wx:for="{{rules}}" wx:key="*this" class="rule">{{item}}</text>
+      </view>
+    </view>
+
+    <view class="panel">
+      <view class="panel-head">
+        <text class="panel-title">校准对话</text>
+        <text class="panel-sub">哪里不像你</text>
+      </view>
+      <view class="chat-log">
+        <view wx:if="{{!profileChat.length}}" class="message ai">可以直接说：哪里不像你？</view>
+        <view wx:for="{{profileChat}}" wx:key="index" class="message {{item.role}}">{{item.text}}</view>
+      </view>
+      <view class="chat-row">
+        <input class="chat-input" value="{{profileMessage}}" placeholder="输入校准意见" bindinput="onProfileMessageInput" />
+        <button class="secondary send" loading="{{profileChatLoading}}" bindtap="sendProfileMessage">修改</button>
+      </view>
+      <button class="primary" bindtap="confirmProfile">确认画像，进入工作台</button>
+    </view>
+  </view>
+
+  <view wx:if="{{currentStep === 'workbench'}}" class="section">
+    <view class="panel">
+      <view class="panel-head">
+        <text class="panel-title">相关信息</text>
+        <text class="panel-sub">基于关注画像推荐</text>
+      </view>
+      <view wx:if="{{!relatedInfo.length}}" class="empty">确认风格或补充关注画像后，再推荐相关信息。</view>
+      <view wx:for="{{relatedInfo}}" wx:key="title" class="news-card" data-query="{{item.query}}" bindtap="copySearchQuery">
+        <text class="news-source">{{item.source}}</text>
+        <text class="news-title">{{item.title}}</text>
+        <text class="news-body">{{item.body}}</text>
+      </view>
+    </view>
+
+    <view class="switcher">
+      <view class="switch {{workbenchTab === 'hotspot' ? 'active' : ''}}" data-tab="hotspot" bindtap="setWorkbenchTab">热点选题</view>
+      <view class="switch {{workbenchTab === 'research' ? 'active' : ''}}" data-tab="research" bindtap="setWorkbenchTab">话题钻探</view>
+      <view class="switch {{workbenchTab === 'produce' ? 'active' : ''}}" data-tab="produce" bindtap="setWorkbenchTab">内容生产</view>
+    </view>
+
+    <view wx:if="{{workbenchTab === 'hotspot'}}" class="panel">
+      <view class="panel-head">
+        <text class="panel-title">热点选题</text>
+        <text class="panel-sub">真实热点 / Top4</text>
+      </view>
+      <textarea class="textarea small" value="{{hotspotKeywordInput}}" placeholder="补充关注话题，可留空使用已确认画像" bindinput="onHotspotInput"></textarea>
+      <button class="secondary" loading="{{hotspotLoading}}" bindtap="generateHotspotTopics">生成 Top4</button>
+      <text class="topic-status">{{hotspotStatus}}</text>
+      <view wx:for="{{hotspotTopics}}" wx:key="title" class="topic">
+        <text class="topic-title">{{item.title}}</text>
+        <text wx:if="{{item.scoreText}}" class="topic-score">{{item.scoreText}}</text>
+        <text class="topic-body">{{item.body}}</text>
+        <text wx:if="{{item.firstUrl}}" class="topic-link" data-query="{{item.firstUrl}}" bindtap="copySearchQuery">复制来源链接</text>
+        <view wx:if="{{!item.framework}}" class="topic-actions">
+          <button class="ghost tiny" data-title="{{item.title}}" bindtap="researchTopic">钻探</button>
+          <button class="ghost tiny" data-title="{{item.title}}" data-angle="{{item.suggestedAngle}}" bindtap="useTopic">写这个</button>
+        </view>
+      </view>
+    </view>
+
+    <view wx:if="{{workbenchTab === 'research'}}" class="panel">
+      <view class="panel-head">
+        <text class="panel-title">话题钻探</text>
+        <text class="panel-sub">找切入口</text>
+      </view>
+      <textarea class="textarea small" value="{{researchInput}}" placeholder="输入一个选题或话题" bindinput="onResearchInput"></textarea>
+      <button class="secondary" bindtap="runTopicResearch">开始钻探</button>
+      <view wx:if="{{!researchBlocks.length}}" class="empty">先输入一个具体话题，再开始钻探。</view>
+      <view wx:for="{{researchBlocks}}" wx:key="title" class="research">
+        <text class="block-title">{{item.title}}</text>
+        <text class="feature">{{item.body}}</text>
+      </view>
+    </view>
+
+    <view wx:if="{{workbenchTab === 'produce'}}" class="panel">
+      <view class="panel-head">
+        <text class="panel-title">内容生产</text>
+        <text class="panel-sub">先创作，再贴近文风</text>
+      </view>
+      <view class="type-row">
+        <view wx:for="{{contentTypes}}" wx:key="*this" class="type {{contentType === item ? 'active' : ''}}" data-type="{{item}}" bindtap="setContentType">{{item}}</view>
+      </view>
+      <textarea class="textarea" value="{{taskInput}}" maxlength="-1" placeholder="你想写什么？" bindinput="onTaskInput"></textarea>
+      <button class="primary" loading="{{generateLoading}}" bindtap="generateDraft">生成内容</button>
+    </view>
+
+    <view class="panel output">
+      <view class="panel-head">
+        <text class="panel-title">输出结果</text>
+        <text class="panel-sub">{{draftStatus}}</text>
+      </view>
+      <view wx:if="{{thinking}}" class="thinking">
+        <text class="block-title">Thinking</text>
+        <text>{{thinking}}</text>
+      </view>
+      <view class="output-block">
+        <text class="block-title">内容初稿</text>
+        <text class="draft-text">{{initialDraft || '等待生成'}}</text>
+      </view>
+      <view class="output-block">
+        <text class="block-title">五维评分</text>
+        <text class="draft-text">{{evaluation || '等待生成'}}</text>
+      </view>
+      <view class="output-block final">
+        <text class="block-title">文风优化稿</text>
+        <text class="draft-text">{{draft || '等待生成'}}</text>
+      </view>
+      <text class="hint">AI 辅助生成，发布前请核验事实、版权和引用来源。</text>
+      <view class="output-actions">
+        <button class="secondary" bindtap="copyDraft">复制成稿</button>
+        <button class="secondary" bindtap="saveDraftFile">保存文本</button>
+      </view>
+    </view>
+
+    <view class="panel">
+      <view class="panel-head">
+        <text class="panel-title">继续修改</text>
+        <text class="panel-sub">确认时说“好的”</text>
+      </view>
+      <view class="chat-log">
+        <view wx:if="{{!deliverChat.length}}" class="message ai">生成后，可以继续提出修改。</view>
+        <view wx:for="{{deliverChat}}" wx:key="index" class="message {{item.role}}">{{item.text}}</view>
+      </view>
+      <view class="chat-row">
+        <input class="chat-input" value="{{deliverMessage}}" placeholder="继续改哪里？" bindinput="onDeliverMessageInput" />
+        <button class="secondary send" loading="{{deliverChatLoading}}" bindtap="sendDeliverMessage">修改</button>
+      </view>
+    </view>
+  </view>
+</view>

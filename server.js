@@ -81,6 +81,7 @@ async function handleApi(req, res, pathname) {
   if (pathname === "/api/revise") return reviseDraft(req, res, payload);
   if (pathname === "/api/generate-stream") return generateDraftStream(req, res, payload);
   if (pathname === "/api/workflow-stream") return generateWorkflowStream(req, res, payload);
+  if (pathname === "/api/hotspot-topics") return generateHotspotTopics(req, res, payload);
   if (pathname === "/api/revise-stream") return reviseDraftStream(req, res, payload);
   return sendJson(res, 404, { error: "API not found" });
 }
@@ -649,6 +650,89 @@ async function generateWorkflowStream(_req, res, payload) {
   }
 }
 
+async function generateHotspotTopics(_req, res, payload) {
+  const profile = normalizeProfile(payload.profile || {}, payload.rules || []);
+  const focusProfile = normalizeFocusProfile(payload.focusProfile || {});
+  const rules = normalizeRules(payload.rules || profile.rules || []);
+  const keywords = String(payload.keywords || payload.query || "").slice(0, 1000).trim();
+  const userSignals = buildHotspotUserSignals(profile, focusProfile, rules, keywords);
+  if (!hasHotspotUserSignals(userSignals)) {
+    return sendJson(res, 422, {
+      error: "请先确认风格画像，或输入关注话题/关键词后再生成热点选题。"
+    });
+  }
+
+  const targetDate = normalizeTargetDate(payload.date);
+  const outputLimit = clamp(Math.round(Number(payload.limit || 4)), 4, 6);
+  const trendContext = await collectHotspotTopicContext({ userSignals, targetDate });
+
+  if (!trendContext.topHubItems.length && !trendContext.searchItems.length) {
+    return sendJson(res, 200, {
+      generatedAt: new Date().toISOString(),
+      targetDate,
+      topics: [],
+      bestTopicReason: "",
+      missingSources: trendContext.missingSources,
+      message: "没有读取到可核验的热点来源，暂不生成选题。请补充关键词，或稍后重试。"
+    });
+  }
+
+  const text = await callOpenAI({
+    instructions: [
+      "你是 Content Simulator 的热点选题后台，服务对象是记者、内容创作者、博主和运营人员。",
+      "只能基于输入里的 TopHub 热榜、公开搜索结果、日期节点和用户画像做筛选与改写，不得编造不存在的热点事件。",
+      "TopHub 和公开搜索是平级来源；如果某类来源缺失，保留 missingSources，不要用猜测补齐。",
+      "先过滤高风险话题，再做选题推荐；避免消耗他人苦难、暴力血腥、色情赌博、歧视、宗教冲突、纯政治或战争冲突话题。",
+      "新闻性/时效性是最高权重。评分权重：新闻性/时效性30，用户契合度20，网络传播价值15，情绪与社会气候10，差异化切口10，信息可靠性10，风险可控性5。",
+      "输出 Top4，除非用户显式要求更多；每个选题要说明为什么值得做、适合谁做、从哪里切入。",
+      "只输出合法 JSON，不要 Markdown，不要解释过程。"
+    ].join("\n"),
+    input: JSON.stringify({
+      task: "生成热点选题 Top4",
+      targetDate,
+      outputLimit,
+      userSignals,
+      trendContext,
+      expectedShape: {
+        generatedAt: "ISO时间",
+        missingSources: ["缺失来源说明"],
+        bestTopicReason: "为什么排名第一的选题最好",
+        topics: [
+          {
+            rank: 1,
+            title: "选题标题",
+            sourceSummary: "引用到的真实热点来源摘要",
+            referenceUrls: ["可核验链接"],
+            newsValue: "新闻性/时效性判断",
+            fitReason: "为什么适合该用户",
+            suggestedAngle: "建议切口",
+            riskNote: "风险提示或表达边界",
+            scores: {
+              newsworthiness: 0,
+              userFit: 0,
+              spreadValue: 0,
+              socialMood: 0,
+              differentiation: 0,
+              reliability: 0,
+              riskControl: 0,
+              total: 0
+            }
+          }
+        ]
+      }
+    })
+  });
+
+  const normalized = normalizeHotspotResponse(parseJson(text), trendContext, targetDate, outputLimit);
+  if (!normalized.topics.length) {
+    return sendJson(res, 200, {
+      ...normalized,
+      message: "模型没有基于真实来源生成可用选题，请换一组关键词重试。"
+    });
+  }
+  return sendJson(res, 200, normalized);
+}
+
 async function reviseDraft(_req, res, payload) {
   const profile = normalizeProfile(payload.profile || {}, payload.rules || []);
   const rules = normalizeRules(payload.rules || profile.rules || []);
@@ -725,6 +809,35 @@ async function collectTrendContext(task) {
 }
 
 async function fetchTopHubItems() {
+  const entries = await fetchTopHubEntries();
+  return entries.map((item) => `${item.source}：${item.title}`).slice(0, 40);
+}
+
+async function collectHotspotTopicContext({ userSignals, targetDate }) {
+  const missingSources = [];
+  const [topHubResult, searchResult] = await Promise.allSettled([
+    fetchTopHubEntries(),
+    fetchPublicSearchItems(buildHotspotSearchQueries(userSignals, targetDate))
+  ]);
+
+  let topHubItems = topHubResult.status === "fulfilled" ? topHubResult.value : [];
+  let searchItems = searchResult.status === "fulfilled" ? searchResult.value : [];
+  topHubItems = topHubItems.filter((item) => !isSensitiveHotTopic(item.title)).slice(0, 36);
+  searchItems = searchItems.filter((item) => !isSensitiveHotTopic(item.title)).slice(0, 24);
+
+  if (!topHubItems.length) missingSources.push("TopHub 热榜未读取到可用条目");
+  if (!searchItems.length) missingSources.push("公开搜索未读取到可用条目");
+
+  return {
+    sourceRule: "TopHub 与公开搜索平级；日期节点只用于判断社会情绪和内容时机，不可当作真实热点事件。",
+    topHubItems,
+    searchItems,
+    calendarContext: buildCalendarContext(targetDate),
+    missingSources
+  };
+}
+
+async function fetchTopHubEntries() {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 6000);
   try {
@@ -738,15 +851,352 @@ async function fetchTopHubItems() {
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const html = await response.text();
-    const text = cleanText(html);
-    const candidates = text
-      .split(/(?=微博|知乎|百度|抖音|微信|今日头条|哔哩哔哩|小红书)|\s{2,}/)
-      .map((item) => item.replace(/\s+/g, " ").trim())
-      .filter((item) => item.length >= 6 && item.length <= 80);
-    return Array.from(new Set(candidates)).slice(0, 40);
+    const candidates = extractTopHubCandidates(html);
+    return dedupeHotspotItems(candidates).slice(0, 60);
   } finally {
     clearTimeout(timer);
   }
+}
+
+function extractTopHubCandidates(html) {
+  const items = [];
+  const anchorMatches = [...String(html || "").matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)];
+  for (const match of anchorMatches) {
+    const title = cleanText(match[2]);
+    if (!isUsableHotspotTitle(title)) continue;
+    const href = normalizeHref(match[1], "https://tophub.today/");
+    items.push({
+      title,
+      source: "TopHub",
+      url: href || "https://tophub.today/",
+      channel: "tophub"
+    });
+  }
+
+  if (items.length >= 12) return items;
+
+  const text = cleanText(html);
+  text
+      .split(/(?=微博|知乎|百度|抖音|微信|今日头条|哔哩哔哩|小红书)|\s{2,}/)
+      .map((item) => item.replace(/\s+/g, " ").trim())
+    .filter(isUsableHotspotTitle)
+    .forEach((title) => items.push({
+      title,
+      source: "TopHub",
+      url: "https://tophub.today/",
+      channel: "tophub"
+    }));
+
+  return items;
+}
+
+async function fetchPublicSearchItems(queries) {
+  const engines = [
+    {
+      name: "Bing",
+      buildUrl: (query) => `https://www.bing.com/search?q=${encodeURIComponent(query)}&setlang=zh-CN`
+    },
+    {
+      name: "百度",
+      buildUrl: (query) => `https://www.baidu.com/s?wd=${encodeURIComponent(query)}`
+    }
+  ];
+  const jobs = queries.slice(0, 4).flatMap((query) => engines.map((engine) => ({ query, engine })));
+  const settled = await Promise.allSettled(jobs.map((job) => fetchSearchPage(job.query, job.engine)));
+  const items = settled.flatMap((result) => (result.status === "fulfilled" ? result.value : []));
+  return dedupeHotspotItems(items).slice(0, 32);
+}
+
+async function fetchSearchPage(query, engine) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 7000);
+  try {
+    const response = await fetch(engine.buildUrl(query), {
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.7"
+      }
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const html = await response.text();
+    return extractSearchCandidates(html, query, engine.name);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function extractSearchCandidates(html, query, engineName) {
+  const items = [];
+  const cleanHtml = String(html || "").replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ");
+  const anchorMatches = [...cleanHtml.matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)];
+  for (const match of anchorMatches) {
+    const title = cleanText(match[2]);
+    if (!isUsableHotspotTitle(title)) continue;
+    const url = normalizeHref(match[1], engineName === "百度" ? "https://www.baidu.com/" : "https://www.bing.com/");
+    items.push({
+      title,
+      source: `公开搜索-${engineName}`,
+      query,
+      url,
+      channel: "search"
+    });
+  }
+  return items.slice(0, 12);
+}
+
+function buildHotspotSearchQueries(userSignals, targetDate) {
+  const seeds = [
+    ...userSignals.keywords,
+    ...userSignals.domains,
+    ...userSignals.topics
+  ].map((item) => String(item || "").trim()).filter(Boolean);
+  const uniqueSeeds = Array.from(new Set(seeds)).slice(0, 4);
+  const dateLabel = targetDate.label.replace(/年|月/g, " ").replace("日", "").trim();
+  if (!uniqueSeeds.length) return [`${dateLabel} 今日热点 新闻 热榜`];
+  return uniqueSeeds.map((seed) => `${seed} ${dateLabel} 热点 新闻 讨论 近三天`);
+}
+
+function buildHotspotUserSignals(profile, focusProfile, rules, keywords) {
+  const manualKeywords = extractSearchWords(keywords);
+  const domainNames = (profile.domains || []).map((item) => item.name).filter(Boolean);
+  const profileKeywords = (profile.keywords || []).map((item) => item.word).filter(Boolean);
+  return {
+    manualKeywords,
+    domains: Array.from(new Set([...(focusProfile.domains || []), ...domainNames])).slice(0, 8),
+    topics: Array.from(new Set([...(focusProfile.topics || []), ...profileKeywords])).slice(0, 12),
+    keywords: Array.from(new Set([...manualKeywords, ...profileKeywords, ...(focusProfile.topics || [])])).slice(0, 12),
+    platforms: focusProfile.platforms || [],
+    notes: focusProfile.notes || "",
+    rules: rules.slice(0, 12),
+    styleSummary: {
+      confidence: profile.confidence || "",
+      contentFeatures: (profile.contentFeatures || []).filter((item) => !/待继续学习|待补充/.test(item)).slice(0, 6),
+      textFeatures: (profile.textFeatures || []).filter((item) => !/待继续学习|待补充/.test(item)).slice(0, 6),
+      speechPatterns: (profile.speechPatterns || []).filter((item) => !/待继续学习|待补充/.test(item)).slice(0, 6)
+    }
+  };
+}
+
+function hasHotspotUserSignals(userSignals) {
+  return Boolean(
+    userSignals.manualKeywords.length ||
+    userSignals.domains.length ||
+    userSignals.topics.length ||
+    String(userSignals.notes || "").trim()
+  );
+}
+
+function normalizeHotspotResponse(parsed, trendContext, targetDate, outputLimit) {
+  const source = Array.isArray(parsed) ? { topics: parsed } : (parsed || {});
+  const topics = (Array.isArray(source.topics) ? source.topics : [])
+    .map((topic, index) => normalizeHotspotTopic(topic, index))
+    .filter((topic) => topic.title && !isSensitiveHotTopic(topic.title))
+    .sort((a, b) => b.scores.total - a.scores.total)
+    .slice(0, outputLimit)
+    .map((topic, index) => ({ ...topic, rank: index + 1 }));
+  return {
+    generatedAt: new Date().toISOString(),
+    targetDate,
+    topics,
+    bestTopicReason: String(source.bestTopicReason || topics[0]?.fitReason || "").slice(0, 500),
+    missingSources: Array.from(new Set([...(trendContext.missingSources || []), ...normalizeList(source.missingSources, [])])),
+    sourceCount: {
+      topHub: trendContext.topHubItems.length,
+      search: trendContext.searchItems.length
+    }
+  };
+}
+
+function normalizeHotspotTopic(topic, index) {
+  const scores = normalizeHotspotScores(topic?.scores || {});
+  return {
+    rank: clamp(Math.round(Number(topic?.rank || index + 1)), 1, 99),
+    title: String(topic?.title || "").slice(0, 80).trim(),
+    sourceSummary: String(topic?.sourceSummary || "").slice(0, 260),
+    referenceUrls: normalizeUrls(topic?.referenceUrls || topic?.urls || []),
+    newsValue: String(topic?.newsValue || "").slice(0, 180),
+    fitReason: String(topic?.fitReason || topic?.reason || "").slice(0, 220),
+    suggestedAngle: String(topic?.suggestedAngle || topic?.angle || "").slice(0, 220),
+    riskNote: String(topic?.riskNote || "注意核验事实，避免夸大。").slice(0, 160),
+    scores
+  };
+}
+
+function normalizeHotspotScores(scores) {
+  const normalized = {
+    newsworthiness: normalizeScore(scores.newsworthiness),
+    userFit: normalizeScore(scores.userFit),
+    spreadValue: normalizeScore(scores.spreadValue),
+    socialMood: normalizeScore(scores.socialMood),
+    differentiation: normalizeScore(scores.differentiation),
+    reliability: normalizeScore(scores.reliability),
+    riskControl: normalizeScore(scores.riskControl)
+  };
+  const total = Number(scores.total);
+  normalized.total = Number.isFinite(total)
+    ? clamp(Math.round(total), 0, 100)
+    : Math.round(
+      normalized.newsworthiness * 0.3 +
+      normalized.userFit * 0.2 +
+      normalized.spreadValue * 0.15 +
+      normalized.socialMood * 0.1 +
+      normalized.differentiation * 0.1 +
+      normalized.reliability * 0.1 +
+      normalized.riskControl * 0.05
+    );
+  return normalized;
+}
+
+function normalizeScore(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? clamp(Math.round(number), 0, 100) : 0;
+}
+
+function normalizeUrls(urls) {
+  const list = Array.isArray(urls) ? urls : [urls];
+  return Array.from(new Set(list.map((url) => String(url || "").trim()).filter((url) => /^https?:\/\//i.test(url)))).slice(0, 4);
+}
+
+function dedupeHotspotItems(items) {
+  const seen = new Set();
+  const output = [];
+  for (const item of items) {
+    const title = String(item.title || "").replace(/\s+/g, " ").trim();
+    const key = title.replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, "").toLowerCase();
+    if (!title || seen.has(key)) continue;
+    seen.add(key);
+    output.push({ ...item, title });
+  }
+  return output;
+}
+
+function isUsableHotspotTitle(title) {
+  const text = String(title || "").replace(/\s+/g, " ").trim();
+  if (text.length < 6 || text.length > 90) return false;
+  if (/^(首页|登录|注册|更多|展开|收起|广告|反馈|关于|客户端|今日热榜|全网热榜|排行榜)$/i.test(text)) return false;
+  if (/ICP备案|Copyright|加载中|请输入|搜索|收藏本站/.test(text)) return false;
+  return /[\u4e00-\u9fa5]/.test(text);
+}
+
+function isSensitiveHotTopic(title) {
+  return /色情|赌博|毒品|血腥|恐怖袭击|枪击|人肉搜索|偷拍视频|尾随|分裂|颠覆|暴力革命|宗教冲突|种族歧视|性别歧视|黄赌毒/i.test(String(title || ""));
+}
+
+function normalizeHref(href, baseUrl) {
+  try {
+    return new URL(String(href || ""), baseUrl).href;
+  } catch (_error) {
+    return "";
+  }
+}
+
+function normalizeTargetDate(value) {
+  const raw = String(value || "").trim();
+  const match = raw.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (match) {
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    return {
+      iso: `${year}-${pad2(month)}-${pad2(day)}`,
+      label: `${year}年${month}月${day}日`,
+      year,
+      month,
+      day
+    };
+  }
+  const formatter = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "numeric",
+    day: "numeric"
+  });
+  const parts = Object.fromEntries(formatter.formatToParts(new Date()).map((part) => [part.type, part.value]));
+  const year = Number(parts.year);
+  const month = Number(parts.month);
+  const day = Number(parts.day);
+  return {
+    iso: `${year}-${pad2(month)}-${pad2(day)}`,
+    label: `${year}年${month}月${day}日`,
+    year,
+    month,
+    day
+  };
+}
+
+function buildCalendarContext(targetDate) {
+  const month = targetDate.month;
+  const day = targetDate.day;
+  const monthRhythms = {
+    1: ["新年规划", "春节前消费", "返乡与年货"],
+    2: ["春节团圆", "开工复苏", "情人节消费"],
+    3: ["春季踏青", "女性消费", "消费者权益"],
+    4: ["清明踏青", "地球日", "春季换新"],
+    5: ["劳动节出行", "母亲节", "夏季前消费"],
+    6: ["高考毕业季", "618大促", "防暑旅游"],
+    7: ["暑假", "小暑/大暑", "防暑降温", "亲子旅游"],
+    8: ["暑期尾声", "返校准备", "夏秋换季"],
+    9: ["开学季", "中秋前后", "国庆出行准备"],
+    10: ["国庆出行", "秋季丰收", "双11预热"],
+    11: ["双11", "入冬", "年末计划"],
+    12: ["年终总结", "冬至养生", "节日消费"]
+  };
+  const solarTerms = {
+    1: ["小寒", "大寒"],
+    2: ["立春", "雨水"],
+    3: ["惊蛰", "春分"],
+    4: ["清明", "谷雨"],
+    5: ["立夏", "小满"],
+    6: ["芒种", "夏至"],
+    7: ["小暑", "大暑"],
+    8: ["立秋", "处暑"],
+    9: ["白露", "秋分"],
+    10: ["寒露", "霜降"],
+    11: ["立冬", "小雪"],
+    12: ["大雪", "冬至"]
+  };
+  const fixedDays = {
+    "3-8": "国际妇女节",
+    "3-15": "消费者权益日",
+    "4-22": "世界地球日",
+    "5-1": "劳动节",
+    "5-17": "世界电信和信息社会日",
+    "6-5": "世界环境日",
+    "6-8": "世界海洋日",
+    "7-8": "全国保险公众宣传日",
+    "7-11": "世界人口日",
+    "8-12": "国际青年日",
+    "9-21": "国际和平日",
+    "10-14": "世界标准日",
+    "11-14": "世界糖尿病日",
+    "12-4": "国家宪法日",
+    "12-5": "国际志愿者日"
+  };
+  const climate = {
+    1: "寒冷、返乡、年初规划",
+    2: "春节节律、开工转换",
+    3: "春季复苏、户外活动增加",
+    4: "踏青、换季、环保议题更自然",
+    5: "出行、劳动、夏季消费启动",
+    6: "毕业季、考试季、暑热开始",
+    7: "高温、防暑、暑期出行和亲子场景",
+    8: "暑期尾声、返校、极端天气需核验",
+    9: "开学、团圆、秋季消费",
+    10: "长假、出行、秋季生活方式",
+    11: "消费大促、入冬、年末节奏",
+    12: "年终复盘、冬季养生、节日消费"
+  };
+  const todayNode = fixedDays[`${month}-${day}`];
+  return {
+    date: targetDate.label,
+    rhythms: monthRhythms[month] || [],
+    solarTerms: solarTerms[month] || [],
+    fixedDay: todayNode || "",
+    climate: climate[month] || "",
+    memeRule: "热梗、热词必须从 TopHub 或公开搜索结果中提取；没有来源时不要生成具体热梗。"
+  };
 }
 
 function extractSearchWords(text) {
@@ -922,9 +1372,9 @@ function hasReadableSources(sources) {
 
 function normalizeFocusProfile(focusProfile) {
   return {
-    domains: normalizeList(focusProfile.domains, ["内容创作"]).slice(0, 6),
-    topics: normalizeList(focusProfile.topics, ["选题", "表达", "传播"]).slice(0, 10),
-    platforms: normalizeList(focusProfile.platforms, ["通用内容平台"]).slice(0, 6),
+    domains: normalizeList(focusProfile.domains, []).slice(0, 6),
+    topics: normalizeList(focusProfile.topics, []).slice(0, 10),
+    platforms: normalizeList(focusProfile.platforms, []).slice(0, 6),
     notes: String(focusProfile.notes || "").slice(0, 1000)
   };
 }
@@ -951,17 +1401,11 @@ function normalizeProfile(profile, rules = []) {
 }
 
 function normalizeDomains(domains) {
-  const fallback = [
-    { name: "内容创作", percent: 40 },
-    { name: "品牌传播", percent: 25 },
-    { name: "科技产品", percent: 20 },
-    { name: "职场经验", percent: 15 }
-  ];
-  const items = Array.isArray(domains) ? domains : fallback;
+  const items = Array.isArray(domains) ? domains : [];
   return items.slice(0, 5).map((item, index) => ({
-    name: String(item.name || fallback[index]?.name || "其他").slice(0, 20),
+    name: String(item.name || "待补充").slice(0, 20),
     percent: clamp(Math.round(Number(item.percent || item.value || 10)), 1, 100)
-  }));
+  })).filter((item) => item.name && item.name !== "待补充");
 }
 
 function normalizeKeywords(keywords) {
@@ -1008,6 +1452,10 @@ function profileShape() {
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
+}
+
+function pad2(value) {
+  return String(value).padStart(2, "0");
 }
 
 function trimTrailingSlash(value) {

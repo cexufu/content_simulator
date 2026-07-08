@@ -1,0 +1,14 @@
+{
+  "pages": [
+    "pages/index/index",
+    "pages/privacy/privacy"
+  ],
+  "window": {
+    "navigationBarTitleText": "Content Simulator",
+    "navigationBarBackgroundColor": "#f7f4ee",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#f7f4ee"
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}

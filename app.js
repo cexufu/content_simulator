@@ -1,4 +1,5 @@
-const STORAGE_KEY = "content-simulator-state-v1";
+const STORAGE_KEY = "content-simulator-state-v2";
+const LEGACY_STORAGE_KEYS = ["content-simulator-state-v1"];
 const apiBaseFromUrl = new URLSearchParams(window.location.search).get("api");
 if (apiBaseFromUrl) {
   localStorage.setItem("content-simulator-api-base", apiBaseFromUrl);
@@ -14,6 +15,10 @@ const state = {
   focusNotes: "",
   currentWorkbench: "hotspot",
   selectedTopic: "",
+  hotspotKeywords: "",
+  hotspotTopics: [],
+  hotspotStatus: "未生成前只展示流程，不输出默认选题。",
+  hotspotMeta: null,
   initialDraft: "",
   evaluation: "",
   draft: "",
@@ -81,6 +86,9 @@ function cacheElements() {
     "taskInput",
     "generateBtn",
     "relatedInfoList",
+    "hotspotInput",
+    "hotspotGenerateBtn",
+    "hotspotStatus",
     "hotspotList",
     "researchInput",
     "researchBtn",
@@ -124,6 +132,10 @@ function bindEvents() {
       focusNotes: "",
       currentWorkbench: "hotspot",
       selectedTopic: "",
+      hotspotKeywords: "",
+      hotspotTopics: [],
+      hotspotStatus: "未生成前只展示流程，不输出默认选题。",
+      hotspotMeta: null,
       initialDraft: "",
       evaluation: "",
       draft: "",
@@ -156,6 +168,19 @@ function bindEvents() {
     goStep("deliver");
   });
   els.generateBtn.addEventListener("click", () => generateDraft());
+  els.hotspotGenerateBtn.addEventListener("click", () => generateHotspotTopics());
+  els.hotspotInput.addEventListener("input", () => {
+    state.hotspotKeywords = els.hotspotInput.value.trim();
+  });
+  els.hotspotList.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-topic-action]");
+    if (!button) return;
+    const index = Number(button.dataset.topicIndex);
+    const topic = state.hotspotTopics[index];
+    if (!topic) return;
+    if (button.dataset.topicAction === "research") runTopicResearch(topic.title);
+    if (button.dataset.topicAction === "produce") useTopicForProduction(topic);
+  });
   document.querySelectorAll(".workbench-tab").forEach((button) => {
     button.addEventListener("click", () => setWorkbench(button.dataset.workbench));
   });
@@ -172,6 +197,7 @@ function bindEvents() {
 }
 
 function loadState() {
+  LEGACY_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
   const raw = localStorage.getItem(STORAGE_KEY);
   if (!raw) return;
   try {
@@ -183,7 +209,8 @@ function loadState() {
 }
 
 function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  const { hotspotTopics, hotspotStatus, hotspotMeta, ...persisted } = state;
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
 }
 
 function renderAll() {
@@ -382,9 +409,6 @@ function sourceLabel(source) {
 }
 
 async function analyzeAndGo(shouldNavigate = true) {
-  if (!state.sources.length) {
-    addDemoSource();
-  }
   if (!hasReadableSource()) {
     setApiStatus("缺少正文", "offline");
     alert("没有读到可分析正文。请粘贴文章正文，或换一个可公开读取的新闻/文章链接。抖音主页和部分动态网页需要补充作品数据。");
@@ -398,6 +422,7 @@ async function analyzeAndGo(shouldNavigate = true) {
         rules: state.rules
       });
       state.profile = result.profile;
+      resetHotspotResults("画像已更新，可以生成新的热点选题。");
       setApiStatus("AI 后台", "online");
     } catch (error) {
       console.warn(error);
@@ -413,16 +438,6 @@ async function analyzeAndGo(shouldNavigate = true) {
 
 function hasReadableSource() {
   return state.sources.some((source) => source.body && !isLimitedSource(source));
-}
-
-function addDemoSource() {
-  state.sources.push({
-    id: makeId(),
-    type: "demo",
-    title: "示例原稿",
-    status: "示例",
-    body: "我通常会先提出一个清晰判断，再解释原因。内容创作不是堆观点，而是找到读者真的关心的问题。好的表达需要克制，也需要具体。"
-  });
 }
 
 function analyzeSources(sources, rules) {
@@ -501,8 +516,10 @@ function scoreDomains(text) {
     name,
     value: words.reduce((sum, word) => sum + countWord(text, word), 0)
   }));
-  const total = scores.reduce((sum, item) => sum + item.value, 0) || 1;
-  return scores
+  const matched = scores.filter((item) => item.value > 0);
+  if (!matched.length) return [];
+  const total = matched.reduce((sum, item) => sum + item.value, 0) || 1;
+  return matched
     .map((item) => ({ ...item, percent: Math.max(8, Math.round((item.value / total) * 100)) }))
     .sort((a, b) => b.percent - a.percent)
     .slice(0, 4);
@@ -537,9 +554,9 @@ function isLimitedSource(source) {
 }
 
 function buildContentFeatures(text, domains) {
-  const topDomain = domains[0]?.name || "内容创作";
+  const topDomain = domains[0]?.name || "待补充";
   const features = [
-    `主题重心偏向${topDomain}`,
+    topDomain === "待补充" ? "主题重心待继续学习" : `主题重心偏向${topDomain}`,
     /观点|判断|本质|原因/.test(text) ? "偏观点表达，喜欢先给判断" : "偏信息整理，适合补充明确观点",
     /案例|故事|经历|场景/.test(text) ? "会借案例或场景展开" : "案例感偏弱，可在生成时补充具体场景",
     /方法|步骤|建议|清单/.test(text) ? "适合沉淀方法型内容" : "可加入清单结构提升可读性"
@@ -607,11 +624,11 @@ function buildTrafficFeatures(text) {
 }
 
 function renderProfile() {
-  if (!state.profile && !hasReadableSource()) {
+  if (!state.profile) {
     renderEmptyProfile();
     return;
   }
-  const profile = state.profile || analyzeSources(state.sources, state.rules);
+  const profile = state.profile;
   els.confidenceLabel.textContent = `置信度：${profile.confidence}`;
   renderRadar(profile.tones);
   renderDonut(profile.domains);
@@ -627,7 +644,7 @@ function renderProfile() {
 }
 
 function renderEmptyProfile() {
-  els.confidenceLabel.textContent = "未读到正文";
+  els.confidenceLabel.textContent = hasReadableSource() ? "待分析" : "未读到正文";
   els.toneRadar.innerHTML = '<text class="radar-label" x="110" y="112" text-anchor="middle">待学习</text>';
   els.domainDonut.style.background = "#ebe5d8";
   els.domainLegend.innerHTML = '<div class="legend-item"><span class="legend-dot"></span>缺少可分析文本</div>';
@@ -669,15 +686,16 @@ function getFocusContext(profile = state.profile) {
   if (/小红书/.test(sourceText)) platforms.push("小红书");
   if (/口播|短视频|抖音/.test(sourceText)) platforms.push("口播/短视频");
   return {
-    domains: domains.length ? domains : ["内容创作"],
-    topics: topics.length ? topics : ["选题", "表达", "传播"],
-    platforms: platforms.length ? platforms : ["通用内容平台"],
+    domains,
+    topics,
+    platforms,
     notes: state.focusNotes || ""
   };
 }
 
 function saveFocusNotes() {
   state.focusNotes = els.focusInput.value.trim();
+  resetHotspotResults("关注画像已更新，可以重新生成热点选题。");
   saveState();
   renderFocusProfile(state.profile);
   renderWorkbench();
@@ -707,18 +725,24 @@ function renderWorkbench() {
 
 function renderRelatedInfo() {
   const focus = getFocusContext();
+  const topic = focus.topics[0] || focus.domains[0] || state.focusNotes || "";
+  const domain = focus.domains[0] || state.focusNotes || "";
+  if (!topic && !domain) {
+    els.relatedInfoList.innerHTML = '<div class="empty-state">确认风格或补充关注画像后，再推荐相关信息。</div>';
+    return;
+  }
   const items = [
     {
       source: "公开新闻检索",
-      title: `${focus.topics[0]} 相关新闻`,
-      body: `查看「${focus.topics[0]}」近期新闻、公共讨论和背景信息。`,
-      url: buildNewsSearchUrl(`${focus.topics[0]} 新闻`)
+      title: `${topic} 相关新闻`,
+      body: `查看「${topic}」近期新闻、公共讨论和背景信息。`,
+      url: buildNewsSearchUrl(`${topic} 新闻`)
     },
     {
       source: "领域动态",
-      title: `${focus.domains[0]} 行业动态`,
-      body: `围绕「${focus.domains[0]}」补充行业变化、案例和趋势材料。`,
-      url: buildNewsSearchUrl(`${focus.domains[0]} 行业动态`)
+      title: `${domain || topic} 行业动态`,
+      body: `围绕「${domain || topic}」补充行业变化、案例和趋势材料。`,
+      url: buildNewsSearchUrl(`${domain || topic} 行业动态`)
     },
     {
       source: "热榜入口",
@@ -745,69 +769,157 @@ function buildNewsSearchUrl(query) {
 }
 
 function renderHotspotTopics() {
-  const focus = getFocusContext();
-  const topics = buildHotspotTopics(focus);
-  els.hotspotList.innerHTML = topics
-    .map(
-      (item) => `
-        <div class="topic-item">
-          <strong>${escapeHtml(item.title)}</strong>
-          <p>${escapeHtml(item.body)}</p>
-          <div class="topic-actions">
-            <button class="ghost small" data-research-topic="${escapeHtml(item.title)}">钻探</button>
-            <button class="ghost small" data-use-topic="${escapeHtml(item.title)}">写这个</button>
-          </div>
-        </div>
-      `
-    )
-    .join("");
-  els.hotspotList.querySelectorAll("[data-research-topic]").forEach((button) => {
-    button.addEventListener("click", () => {
-      state.selectedTopic = button.dataset.researchTopic;
-      els.researchInput.value = state.selectedTopic;
-      setWorkbench("research");
-      runTopicResearch(state.selectedTopic);
-    });
-  });
-  els.hotspotList.querySelectorAll("[data-use-topic]").forEach((button) => {
-    button.addEventListener("click", () => {
-      useTopicForProduction(button.dataset.useTopic);
-    });
-  });
+  if (els.hotspotInput && document.activeElement !== els.hotspotInput) {
+    els.hotspotInput.value = state.hotspotKeywords || "";
+  }
+  if (els.hotspotStatus) {
+    const meta = state.hotspotMeta?.sourceCount;
+    const sourceText = meta ? ` 来源：TopHub ${meta.topHub || 0} 条 / 搜索 ${meta.search || 0} 条。` : "";
+    els.hotspotStatus.textContent = `${state.hotspotStatus || "未生成前只展示流程，不输出默认选题。"}${sourceText}`;
+  }
+  const topics = state.hotspotTopics.length ? state.hotspotTopics : buildHotspotTopics();
+  els.hotspotList.innerHTML = topics.map((item, index) => item.framework ? renderHotspotFramework(item) : renderHotspotCard(item, index)).join("");
 }
 
-function buildHotspotTopics(focus) {
-  const primary = focus.topics[0] || "内容";
-  const domain = focus.domains[0] || "内容创作";
+function buildHotspotTopics() {
   return [
     {
-      title: `${primary}里的新变化`,
-      body: `适合从近期变化、用户体感和具体案例切入，做一条稳妥选题。`
+      title: "1. 先确认用户输入",
+      body: "读取用户旧稿、关注画像、平台方向、目标读者和本次任务；信息不足时停留等待，不输出默认选题。"
     },
     {
-      title: `${domain}的烟火气故事`,
-      body: "把宏观议题落到具体人、具体场景和具体选择上。"
+      title: "2. 双渠道收集热点",
+      body: "同时读取 TopHub 和公开搜索，两个渠道平级处理；保留来源、时间、热度或可核验依据。"
     },
     {
-      title: `一个被忽略的${primary}问题`,
-      body: "避开大家都在写的角度，找反常识、低声量但高共鸣的切口。"
+      title: "3. 结合用户画像筛选",
+      body: "按领域契合、平台适配、受众相关性、传播价值、风险程度过滤，只留下适合该用户的真实选题。"
     },
     {
-      title: `${primary}和当下情绪`,
-      body: "结合季节、节日、社会情绪和平台讨论，做更有网感的表达。"
+      title: "4. 输出选题池",
+      body: "每个选题应包含话题标题、来源、热度/依据、推荐切口、适配理由和风险提示。"
     }
   ];
 }
 
+function renderHotspotFramework(item) {
+  return `
+    <div class="topic-item">
+      <strong>${escapeHtml(item.title)}</strong>
+      <p>${escapeHtml(item.body)}</p>
+    </div>
+  `;
+}
+
+function renderHotspotCard(item, index) {
+  const scores = item.scores || {};
+  const sourceLinks = (item.referenceUrls || [])
+    .map((url, linkIndex) => {
+      const href = safeUrl(url);
+      if (!href) return "";
+      return `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">来源${linkIndex + 1}</a>`;
+    })
+    .filter(Boolean)
+    .join("");
+  return `
+    <div class="topic-item topic-result">
+      <div class="topic-rank">Top ${item.rank || index + 1}</div>
+      <strong>${escapeHtml(item.title)}</strong>
+      <div class="topic-score-row">
+        <span>总分 ${formatScore(scores.total)}</span>
+        <span>新闻性 ${formatScore(scores.newsworthiness)}</span>
+        <span>契合 ${formatScore(scores.userFit)}</span>
+        <span>传播 ${formatScore(scores.spreadValue)}</span>
+      </div>
+      ${item.sourceSummary ? `<p>${escapeHtml(item.sourceSummary)}</p>` : ""}
+      ${item.newsValue ? `<p><b>新闻性：</b>${escapeHtml(item.newsValue)}</p>` : ""}
+      ${item.fitReason ? `<p><b>适配：</b>${escapeHtml(item.fitReason)}</p>` : ""}
+      ${item.suggestedAngle ? `<p><b>切口：</b>${escapeHtml(item.suggestedAngle)}</p>` : ""}
+      ${item.riskNote ? `<p><b>边界：</b>${escapeHtml(item.riskNote)}</p>` : ""}
+      ${sourceLinks ? `<div class="topic-sources">${sourceLinks}</div>` : ""}
+      <div class="topic-actions">
+        <button class="ghost small" data-topic-action="research" data-topic-index="${index}">钻探</button>
+        <button class="secondary small" data-topic-action="produce" data-topic-index="${index}">写这个</button>
+      </div>
+    </div>
+  `;
+}
+
+async function generateHotspotTopics() {
+  const keywords = (els.hotspotInput.value || "").trim();
+  state.hotspotKeywords = keywords;
+  if (!hasHotspotSignal(keywords)) {
+    state.hotspotTopics = [];
+    state.hotspotStatus = "请先确认风格画像，或输入关注话题/关键词。";
+    state.hotspotMeta = null;
+    renderHotspotTopics();
+    return;
+  }
+  await withBusy(els.hotspotGenerateBtn, "生成中", async () => {
+    try {
+      setApiStatus("读取热点", "busy");
+      resetHotspotResults("正在读取 TopHub 和公开搜索...");
+      renderHotspotTopics();
+      const result = await postApi("/api/hotspot-topics", {
+        profile: state.profile || {},
+        focusProfile: getFocusContext(),
+        rules: state.rules,
+        keywords
+      });
+      state.hotspotTopics = Array.isArray(result.topics) ? result.topics : [];
+      state.hotspotMeta = {
+        sourceCount: result.sourceCount || null,
+        missingSources: result.missingSources || []
+      };
+      state.hotspotStatus = state.hotspotTopics.length
+        ? `已生成 Top${state.hotspotTopics.length}。${result.bestTopicReason || ""}`.trim()
+        : (result.message || "没有读取到可核验热点，暂不生成选题。");
+      setApiStatus("AI 后台", "online");
+    } catch (error) {
+      console.warn(error);
+      state.hotspotTopics = [];
+      state.hotspotMeta = null;
+      state.hotspotStatus = error.message || "热点选题生成失败。";
+      setApiStatus("热点失败", "offline");
+    }
+    saveState();
+    renderHotspotTopics();
+  });
+}
+
+function hasHotspotSignal(keywords) {
+  const focus = getFocusContext();
+  return Boolean(
+    keywords ||
+    focus.notes ||
+    focus.domains.length ||
+    focus.topics.length
+  );
+}
+
+function resetHotspotResults(status) {
+  state.hotspotTopics = [];
+  state.hotspotMeta = null;
+  state.hotspotStatus = status || "未生成前只展示流程，不输出默认选题。";
+}
+
 function runTopicResearch(topic) {
-  const currentTopic = topic || state.selectedTopic || getFocusContext().topics[0] || "当前话题";
+  const currentTopic = topic || state.selectedTopic || getFocusContext().topics[0] || "";
+  if (!currentTopic) {
+    els.researchOutput.innerHTML = '<div class="empty-state">先输入一个具体话题，再开始钻探。</div>';
+    return;
+  }
   state.selectedTopic = currentTopic;
   saveState();
   renderTopicResearch(currentTopic);
 }
 
 function renderTopicResearch(topic) {
-  const currentTopic = topic || state.selectedTopic || "先选择或输入一个话题";
+  const currentTopic = topic || state.selectedTopic || "";
+  if (!currentTopic) {
+    els.researchOutput.innerHTML = '<div class="empty-state">先选择或输入一个话题。</div>';
+    return;
+  }
   const blocks = [
     {
       title: "谁做过了",
@@ -832,9 +944,11 @@ function renderTopicResearch(topic) {
 }
 
 function useTopicForProduction(topic) {
-  const text = `围绕「${topic}」写一篇内容。要求：有具体切口，不要泛泛而谈，最后输出适合我风格的版本。`;
+  const title = typeof topic === "string" ? topic : topic?.title;
+  const angle = typeof topic === "string" ? "" : topic?.suggestedAngle;
+  const text = `围绕「${title}」写一篇内容。要求：有具体切口，不要泛泛而谈，最后输出适合我风格的版本。${angle ? `建议切口：${angle}` : ""}`;
   els.taskInput.value = text;
-  state.selectedTopic = topic;
+  state.selectedTopic = title;
   setWorkbench("produce");
 }
 
@@ -915,7 +1029,7 @@ function saveRulesFromInput() {
   els.rulesInput.value = "";
   saveState();
   renderRules();
-  renderSummary(state.profile || analyzeSources(state.sources, state.rules));
+  renderSummary(state.profile);
 }
 
 function renderRules() {
@@ -925,6 +1039,13 @@ function renderRules() {
 }
 
 function renderSummary(profile) {
+  if (!profile) {
+    els.profileSummary.innerHTML = `
+      <div class="summary-line"><strong>状态：</strong>还没有确认风格画像。</div>
+      <div class="summary-line"><strong>处理：</strong>请先在原稿区点击“开始读稿”。</div>
+    `;
+    return;
+  }
   const keywords = profile.keywords.slice(0, 5).map((item) => item.word).join("、") || "待补充";
   const domains = profile.domains.slice(0, 2).map((item) => item.name).join("、") || "待补充";
   const speech = (profile.speechPatterns || []).slice(0, 2).join("；") || "待补充";
@@ -956,12 +1077,13 @@ async function sendProfileMessage() {
   try {
     setApiStatus("AI 校准中", "busy");
     const result = await postApi("/api/refine-profile", {
-      profile: state.profile || analyzeSources(state.sources, state.rules),
+      profile: state.profile || {},
       message,
       rules: state.rules
     });
     state.profile = result.profile || state.profile;
     state.rules = result.rules || state.rules;
+    resetHotspotResults("画像已校准，可以重新生成热点选题。");
     state.profileChat.push({ role: "ai", text: result.reply || "已按你的反馈校准。" });
     setApiStatus("AI 后台", "online");
   } catch (error) {
@@ -970,15 +1092,15 @@ async function sendProfileMessage() {
     if (rules.length) {
       state.rules = unique([...state.rules, ...rules]);
     }
-    state.profileChat.push({ role: "ai", text: "已记下。后续生成会按这条规则调整。" });
-    setApiStatus("本地模式", "offline");
+    state.profileChat.push({ role: "ai", text: rules.length ? "模型校准失败，但已把这句话保存为额外规则。" : "模型校准失败，请稍后重试。" });
+    setApiStatus("校准失败", "offline");
   }
 
   if (state.profile) state.profile.rules = state.rules;
   saveState();
   renderChats();
   renderRules();
-  renderSummary(state.profile || analyzeSources(state.sources, state.rules));
+  renderSummary(state.profile);
   renderFocusProfile(state.profile);
   renderWorkbench();
 }
@@ -1044,36 +1166,18 @@ async function generateDraft() {
       setApiStatus("AI 后台", "online");
     } catch (error) {
       console.warn(error);
-      state.initialDraft = composeDraft(type, task, state.profile, []);
-      state.evaluation = composeEvaluation(state.initialDraft);
-      state.draft = composeDraft(type, task, state.profile, state.rules);
+      state.initialDraft = "";
+      state.evaluation = "";
+      state.draft = "";
       state.finalized = false;
       state.thinking = "";
-      state.deliverChat = [{ role: "ai", text: "优化稿已生成。可以继续说要改哪里，确认时说“好的”。" }];
-      setApiStatus("本地模式", "offline");
+      state.deliverChat = [{ role: "ai", text: "生成失败，未使用本地模板兜底。请检查后台连接后重试。" }];
+      setApiStatus("生成失败", "offline");
     }
     saveState();
     renderDraft();
     renderChats();
   });
-}
-
-function composeDraft(type, task, profile, rules) {
-  const tones = topTones(profile.tones).join("、");
-  const keywords = profile.keywords.slice(0, 5).map((item) => item.word).join("、") || "表达、内容、读者";
-  const ruleText = rules.length ? `\n\n写作规则：${rules.join("；")}。` : "";
-  return `标题：先把问题说清楚\n\n${task}\n\n我会先给一个判断：这件事真正重要的，不是把话说得更满，而是让表达更像自己。\n\n如果是做${type}，第一步不是追求复杂，而是确认读者到底在意什么。一个好的内容，通常有三个层次：先提出问题，再给出判断，最后落到一个可执行的建议。\n\n这次内容可以围绕「${keywords}」展开。语气保持${tones}，少一点空泛，多一点具体。不要急着下结论，也不要把每句话都写成口号。\n\n最后留一个轻的互动：你最想保留自己的哪一种表达习惯？${ruleText}`;
-}
-
-function composeEvaluation(draft) {
-  const lengthScore = draft.length > 500 ? 78 : 66;
-  return [
-    `新闻性 / 时效性：${lengthScore}。需要继续补充更具体的当下信息。`,
-    "网络传播价值：72。有明确问题意识，但标题和开头还可以更抓人。",
-    "情绪感染力：70。表达克制，情绪张力可以再集中。",
-    "故事真实感 / 贴近性：74。适合补充个人经历或具体场景。",
-    "信息可靠性：68。涉及事实判断时需要补充来源。"
-  ].join("\n");
 }
 
 async function sendDeliverMessage() {
@@ -1116,10 +1220,10 @@ async function sendDeliverMessage() {
     setApiStatus("AI 后台", "online");
   } catch (error) {
     console.warn(error);
-    state.draft = reviseDraft(originalDraft, message);
+    state.draft = originalDraft;
     state.finalized = false;
-    state.deliverChat.push({ role: "ai", text: "已按你的意见修改。你可以继续调整语气、结构或长度。" });
-    setApiStatus("本地模式", "offline");
+    state.deliverChat.push({ role: "ai", text: "改稿失败，已保留原稿，请检查后台连接后重试。" });
+    setApiStatus("改稿失败", "offline");
   }
 
   saveState();
@@ -1156,10 +1260,10 @@ async function finalizeDraft(originalDraft, message) {
     setApiStatus("AI 后台", "online");
   } catch (error) {
     console.warn(error);
-    state.draft = cleanFinalDraft(originalDraft);
-    state.finalized = true;
-    state.deliverChat.push({ role: "ai", text: "已整理成最终清洁版，可直接下载。" });
-    setApiStatus("本地模式", "offline");
+    state.draft = originalDraft;
+    state.finalized = false;
+    state.deliverChat.push({ role: "ai", text: "最终版整理失败，已保留上一版，请检查后台连接后重试。" });
+    setApiStatus("整理失败", "offline");
   }
 
   saveState();
@@ -1211,25 +1315,6 @@ function cleanFinalDraft(draft) {
     .replace(/\n\s*修改说明[:：][\s\S]*$/i, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-}
-
-function reviseDraft(draft, instruction) {
-  if (/短|精简|压缩/.test(instruction)) {
-    return draft
-      .split("\n\n")
-      .filter((_, index) => index < 4)
-      .join("\n\n");
-  }
-  if (/标题/.test(instruction)) {
-    return draft.replace(/^标题：.+/, "标题：让表达回到你自己");
-  }
-  if (/锋利|观点/.test(instruction)) {
-    return `${draft}\n\n补充观点：真正拉开差距的，不是会不会用 AI，而是你有没有一套稳定的判断。`;
-  }
-  if (/温和|柔和|克制/.test(instruction)) {
-    return draft.replace(/我会先给一个判断：/, "可以先轻轻放下一个判断：");
-  }
-  return `${draft}\n\n修改说明：已记住「${instruction}」，下一版会继续按这个方向收紧。`;
 }
 
 function renderDraft() {
@@ -1366,6 +1451,16 @@ function escapeHtml(value) {
     .replace(/"/g, "&quot;");
 }
 
+function safeUrl(value) {
+  const url = String(value || "").trim();
+  return /^https?:\/\//i.test(url) ? url : "";
+}
+
+function formatScore(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.round(number) : 0;
+}
+
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -1377,7 +1472,7 @@ async function checkApiHealth() {
     const data = await response.json();
     setApiStatus(data.configured ? "AI 后台" : "缺少 Key", data.configured ? "online" : "offline");
   } catch (_error) {
-    setApiStatus("本地模式", "offline");
+    setApiStatus("后台离线", "offline");
   }
 }
 

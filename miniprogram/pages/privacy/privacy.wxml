@@ -1,0 +1,8 @@
+<view class="page">
+  <view class="panel">
+    <text class="title">隐私说明</text>
+    <text class="body">Content Simulator 用于辅助内容创作者学习文本风格、整理选题和生成稿件。你粘贴、上传或提交的材料，会发送到后台和模型服务进行解析、分析与生成。</text>
+    <text class="body">当前版本不主动收集手机号、通讯录、定位等无关信息。请不要上传身份证号、联系方式、商业机密、未公开稿件或未经授权的他人作品。</text>
+    <text class="body">AI 生成内容仅作为写作辅助，正式发布前请自行核验事实、版权、引用来源和平台规则。</text>
+  </view>
+</view>

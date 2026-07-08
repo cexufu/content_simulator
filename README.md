@@ -122,6 +122,42 @@ MODEL_API_STYLE=chat
 - `POST /api/generate-stream`：流式生成初稿，返回正文和 thinking。
 - `POST /api/revise-stream`：流式改稿，返回正文和 thinking。
 
+## 微信小程序体验版
+
+小程序代码在：
+
+```text
+miniprogram/
+```
+
+调试、体验版和上架步骤见：
+
+```text
+miniprogram/RELEASE.md
+```
+
+导入方式：
+
+1. 打开微信开发者工具。
+2. 选择“导入项目”。
+3. 项目目录选择 `miniprogram/`。
+4. AppID 可先使用测试号或你自己的个人小程序 AppID。
+5. 开发阶段可在详情里勾选“不校验合法域名、web-view、TLS 版本以及 HTTPS 证书”。
+
+当前小程序是体验版 MVP：
+
+- 原生小程序实现，不使用 `web-view`。
+- 默认连接 `https://content-simulator.onrender.com` 后端。
+- 支持粘贴原稿、上传 Word/TXT/HTML、读取公开链接、分析文风、确认关注画像、热点选题、话题钻探、内容生成、流式输出、thinking 展示、继续改稿、最终清洁版、复制/保存文本。
+- 相关信息在小程序内以检索词卡片呈现，点击后复制检索词；个人主体小程序不适合直接承载外部网页。
+
+正式发布前需要处理：
+
+- 小程序服务器域名必须是 HTTPS 且完成 ICP 备案。
+- 如果继续使用 AI 创作/AI 问答能力，建议使用非个人主体，类目走“深度合成 - AI创作 / AI问答”。
+- 需要补隐私协议、AI 生成内容标识、内容安全策略、投诉反馈入口。
+- 后端建议迁移到腾讯云或微信云托管，再配置合法请求域名。
+
 ## 当前边界
 
 - DOCX、TXT、Markdown、HTML 文件会自动解析。

@@ -231,8 +231,13 @@
           <div class="panel">
             <div class="panel-title">
               <h3>热点选题</h3>
-              <span>热点 + 关注画像</span>
+              <span>真实热点 / Top4</span>
             </div>
+            <div class="topic-control">
+              <input id="hotspotInput" type="text" placeholder="补充关注话题，可留空使用已确认画像" />
+              <button class="secondary" id="hotspotGenerateBtn">生成 Top4</button>
+            </div>
+            <div class="topic-status" id="hotspotStatus">未生成前只展示流程，不输出默认选题。</div>
             <div class="topic-grid" id="hotspotList"></div>
           </div>
         </section>
