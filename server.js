@@ -567,6 +567,7 @@ async function generateWorkflowStream(_req, res, payload) {
   const rules = normalizeRules(payload.rules || profile.rules || []);
   const task = String(payload.task || "").slice(0, 4000);
   const type = String(payload.type || "内容").slice(0, 100);
+  const focusProfile = normalizeFocusProfile(payload.focusProfile || {});
   sendSseHeaders(res);
 
   try {
