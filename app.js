@@ -11,6 +11,8 @@ let apiToken = localStorage.getItem(AUTH_TOKEN_KEY) || "";
 let syncingRemoteState = false;
 let remoteSaveInFlight = false;
 let remoteSavePending = false;
+let remoteSaveTimer = null;
+let profileAnalysisInFlight = false;
 
 const state = {
   accepted: false,
@@ -456,9 +458,9 @@ function handleUnauthorized(response) {
   state.authenticated = false;
   renderAuth();
 }
-function goStep(step) {
+function goStep(step, options = {}) {
   state.currentStep = step;
-  saveState();
+  saveState(options);
   renderStep();
 }
 
@@ -650,6 +652,13 @@ async function analyzeAndGo(shouldNavigate = true) {
     alert("没有读到可分析正文。请粘贴文章正文，或换一个可公开读取的新闻/文章链接。抖音主页和部分动态网页需要补充作品数据。");
     return;
   }
+  profileAnalysisInFlight = true;
+  if (shouldNavigate) {
+    state.currentStep = "profile";
+    saveState({ localOnly: true });
+    renderStep();
+  }
+  renderProfile();
   await withBusy(els.analyzeBtn, "正在读稿", async () => {
     try {
       setApiStatus("AI 分析中", "busy");
@@ -663,15 +672,16 @@ async function analyzeAndGo(shouldNavigate = true) {
     } catch (error) {
       console.warn(error);
       setApiStatus("分析失败", "offline");
-      alert(error.message || "AI 分析失败，请检查后端 Key 和链接内容。");
+      alert(error.message || "AI 分析失败，请检查后端 Key、模型名称和链接内容。");
       return;
+    } finally {
+      profileAnalysisInFlight = false;
     }
     saveState();
     renderProfile();
-    if (shouldNavigate) goStep("profile");
+    if (shouldNavigate) renderStep();
   });
 }
-
 function hasReadableSource() {
   return state.sources.some((source) => source.body && !isLimitedSource(source));
 }
@@ -880,6 +890,24 @@ function renderProfile() {
 }
 
 function renderEmptyProfile() {
+  if (profileAnalysisInFlight) {
+    els.confidenceLabel.textContent = "正在读稿";
+    els.toneRadar.innerHTML = '<text class="radar-label" x="110" y="112" text-anchor="middle">分析中</text>';
+    els.domainDonut.style.background = "#ebe5d8";
+    els.domainLegend.innerHTML = '<div class="legend-item"><span class="legend-dot"></span>正在抽取领域和表达特征</div>';
+    els.keywordChips.innerHTML = '<span class="chip">正在读稿</span><span class="chip">请稍候</span>';
+    renderFeatureList(els.contentFeatures, ["正在识别主题、选题偏好和内容结构"]);
+    renderFeatureList(els.textFeatures, ["正在分析常用词、句式和表达节奏"]);
+    renderFeatureList(els.speechPatterns, ["正在提取开场、结尾、转场和固定表达"]);
+    renderFeatureList(els.trafficFeatures, ["正在判断传播线索和内容抓手"]);
+    renderFocusProfile(null);
+    renderRules();
+    els.profileSummary.innerHTML = `
+      <div class="summary-line"><strong>状态：</strong>正在读取已加入材料，完成后会自动刷新风格画像。</div>
+      <div class="summary-line"><strong>提示：</strong>Word 或网页正文较长时需要几十秒；你可以先停留在本页查看进度。</div>
+    `;
+    return;
+  }
   els.confidenceLabel.textContent = hasReadableSource() ? "待分析" : "未读到正文";
   els.toneRadar.innerHTML = '<text class="radar-label" x="110" y="112" text-anchor="middle">待学习</text>';
   els.domainDonut.style.background = "#ebe5d8";
@@ -896,7 +924,6 @@ function renderEmptyProfile() {
     <div class="summary-line"><strong>处理：</strong>回到原稿收集区，补充正文后再开始读稿。</div>
   `;
 }
-
 function renderFocusProfile(profile) {
   const focus = getFocusContext(profile);
   const tags = [

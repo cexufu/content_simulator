@@ -34,21 +34,21 @@ npm start
 
 ```bash
 DEEPSEEK_API_KEY=sk-your-deepseek-api-key
-MODEL_NAME=deepseek-v4-pro
+MODEL_NAME=deepseek-v4-flash
 MODEL_BASE_URL=https://api.deepseek.com
 MODEL_API_STYLE=chat
-MODEL_THINKING=enabled
-MODEL_REASONING_EFFORT=high
+MODEL_THINKING=disabled
+MODEL_REASONING_EFFORT=low
 PORT=10006
 ALLOWED_ORIGIN=
 ```
 
 - `DEEPSEEK_API_KEY`：只放在后端环境变量里，不要写进前端。
-- `MODEL_NAME`：默认 `deepseek-v4-pro`，用于 thinking 模式。
+- `MODEL_NAME`：默认 `deepseek-v4-flash`，用于 thinking 模式。
 - `MODEL_BASE_URL`：默认 `https://api.deepseek.com`。
 - `MODEL_API_STYLE`：DeepSeek 使用 `chat`。
-- `MODEL_THINKING`：默认 `enabled`，如需关闭可设为 `off`。
-- `MODEL_REASONING_EFFORT`：默认 `high`。
+- `MODEL_THINKING`：默认 `disabled`，读稿和内容生成优先响应速度；需要深度推理时再改为 `enabled`。
+- `MODEL_REASONING_EFFORT`：默认 `low`；只有在启用 thinking 时才明显生效。
 - `ALLOWED_ORIGIN`：如果前端部署在 GitHub Pages、后端部署在其他域名，可设置为 GitHub Pages 地址。
 
 如果 GitHub Pages 前端要连接独立后端，首次访问时可以带上：
@@ -80,11 +80,11 @@ cd content_simulator
 
 ```bash
 DEEPSEEK_API_KEY=你的真实Key
-MODEL_NAME=deepseek-v4-pro
+MODEL_NAME=deepseek-v4-flash
 MODEL_BASE_URL=https://api.deepseek.com
 MODEL_API_STYLE=chat
-MODEL_THINKING=enabled
-MODEL_REASONING_EFFORT=high
+MODEL_THINKING=disabled
+MODEL_REASONING_EFFORT=low
 PORT=10006
 ```
 

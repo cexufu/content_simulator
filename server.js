@@ -8,13 +8,14 @@ loadEnv();
 
 const PORT = Number(process.env.PORT || 10006);
 const MODEL_API_KEY = process.env.MODEL_API_KEY || process.env.DEEPSEEK_API_KEY || process.env.OPENAI_API_KEY || "";
-const MODEL_NAME = process.env.MODEL_NAME || process.env.DEEPSEEK_MODEL || process.env.OPENAI_MODEL || "deepseek-v4-pro";
+const MODEL_NAME = process.env.MODEL_NAME || process.env.DEEPSEEK_MODEL || process.env.OPENAI_MODEL || "deepseek-v4-flash";
 const MODEL_BASE_URL = trimTrailingSlash(
   process.env.MODEL_BASE_URL || process.env.DEEPSEEK_BASE_URL || process.env.OPENAI_BASE_URL || "https://api.deepseek.com"
 );
 const MODEL_API_STYLE = process.env.MODEL_API_STYLE || process.env.OPENAI_API_STYLE || "chat";
-const MODEL_THINKING = process.env.MODEL_THINKING || "enabled";
-const MODEL_REASONING_EFFORT = process.env.MODEL_REASONING_EFFORT || "high";
+const MODEL_THINKING = process.env.MODEL_THINKING || "disabled";
+const MODEL_REASONING_EFFORT = process.env.MODEL_REASONING_EFFORT || "low";
+const MODEL_TIMEOUT_MS = Number(process.env.MODEL_TIMEOUT_MS || 45000);
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "";
 const INVITE_CODES = parseInviteCodes(process.env.INVITE_CODES || process.env.ACCESS_CODES || "");
 const INVITE_REQUIRED = INVITE_CODES.size > 0 || /^true$/i.test(process.env.INVITE_REQUIRED || "");
@@ -1539,6 +1540,7 @@ async function callOpenAI({ instructions, input }) {
 async function callResponses({ instructions, input }) {
   const response = await fetch(`${MODEL_BASE_URL}/responses`, {
     method: "POST",
+    signal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
     headers: {
       "Authorization": `Bearer ${MODEL_API_KEY}`,
       "Content-Type": "application/json"
@@ -1561,6 +1563,7 @@ async function callResponses({ instructions, input }) {
 async function callChatCompletions({ instructions, input }) {
   const response = await fetch(`${MODEL_BASE_URL}/chat/completions`, {
     method: "POST",
+    signal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
     headers: {
       "Authorization": `Bearer ${MODEL_API_KEY}`,
       "Content-Type": "application/json"
@@ -1634,7 +1637,11 @@ async function callChatCompletionsStream({ instructions, input, onThinking, onCo
 }
 
 function buildThinkingOptions() {
-  if (!MODEL_THINKING || MODEL_THINKING === "off") return {};
+  const thinking = String(MODEL_THINKING || "disabled").toLowerCase();
+  if (thinking === "off") return {};
+  if (["disabled", "disable", "false", "0", "none"].includes(thinking)) {
+    return { thinking: { type: "disabled" } };
+  }
   return {
     thinking: {
       type: MODEL_THINKING,
