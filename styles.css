@@ -746,6 +746,18 @@ input:focus {
   margin-bottom: 12px;
 }
 
+.workflow-grid {
+  grid-template-columns: repeat(2, 1fr);
+  margin-bottom: 6px;
+}
+
+.mode-hint {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 .type-grid label {
   display: flex;
   align-items: center;

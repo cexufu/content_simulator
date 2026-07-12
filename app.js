@@ -29,7 +29,9 @@ const state = {
   finalized: false,
   thinking: "",
   profileChat: [],
-  deliverChat: []
+  deliverChat: [],
+  workflowMode: "fast",
+  workflowStage: ""
 };
 
 const domainBanks = {
@@ -1182,6 +1184,7 @@ async function generateDraft() {
   const task = els.taskInput.value.trim();
   if (!task) return;
   const type = document.querySelector('input[name="contentType"]:checked')?.value || "内容";
+  const mode = document.querySelector('input[name="workflowMode"]:checked')?.value || "fast";
   await withBusy(els.generateBtn, "正在生成", async () => {
     try {
       setApiStatus("AI 工作流", "busy");
@@ -1190,14 +1193,21 @@ async function generateDraft() {
       state.draft = "";
       state.finalized = false;
       state.thinking = "";
+      state.workflowMode = mode;
+      state.workflowStage = mode === "fast" ? "fast" : "draft";
       renderDraft();
       await streamApi("/api/workflow-stream", {
         type,
         task,
         profile: state.profile,
         focusProfile: getFocusContext(),
-        rules: state.rules
+        rules: state.rules,
+        mode
       }, {
+        onStage: (name) => {
+          state.workflowStage = name;
+          renderDraft();
+        },
         onThinking: (text) => {
           state.thinking += text;
           renderDraft();
@@ -1215,6 +1225,7 @@ async function generateDraft() {
           renderDraft();
         }
       });
+      state.workflowStage = "";
       state.deliverChat = [{ role: "ai", text: "优化稿已生成。可以继续说要改哪里，确认时说“好的”。" }];
       setApiStatus("AI 后台", "online");
     } catch (error) {
@@ -1224,6 +1235,7 @@ async function generateDraft() {
       state.draft = "";
       state.finalized = false;
       state.thinking = "";
+      state.workflowStage = "";
       state.deliverChat = [{ role: "ai", text: "生成失败，未使用本地模板兜底。请检查后台连接后重试。" }];
       setApiStatus("生成失败", "offline");
     }
@@ -1371,11 +1383,13 @@ function cleanFinalDraft(draft) {
 }
 
 function renderDraft() {
-  els.initialDraftStatus.textContent = state.initialDraft ? "已生成" : "等待生成";
-  els.initialDraftOutput.textContent = state.initialDraft || "内容初稿会显示在这里。";
-  els.evaluationStatus.textContent = state.evaluation ? "已评分" : "等待评分";
-  els.evaluationOutput.textContent = state.evaluation || "五维评分会显示在这里。";
-  els.draftStatus.textContent = state.finalized ? "最终清洁版" : state.draft ? "已生成" : "等待生成";
+  const fastMode = state.workflowMode === "fast";
+  const stage = state.workflowStage;
+  els.initialDraftStatus.textContent = state.initialDraft ? "已生成" : fastMode ? "快速模式跳过" : stage === "draft" ? "正在生成" : "等待生成";
+  els.initialDraftOutput.textContent = state.initialDraft || (fastMode ? "快速模式会直接生成可修改工作底稿；如需完整初稿、评分、终稿三段流程，可切换深度工作流。" : "内容初稿会显示在这里。");
+  els.evaluationStatus.textContent = state.evaluation ? "已评分" : fastMode ? "深度模式运行" : stage === "evaluation" ? "正在评分" : "等待评分";
+  els.evaluationOutput.textContent = state.evaluation || (fastMode ? "快速模式不跑单独评分，优先保证出稿速度。" : "五维评分会显示在这里。");
+  els.draftStatus.textContent = state.finalized ? "最终清洁版" : stage === "fast" || stage === "final" ? "正在生成" : state.draft ? "已生成" : "等待生成";
   els.draftOutput.textContent = state.draft || "文风优化稿会显示在这里。";
   els.thinkingOutput.textContent = state.thinking || "";
   els.thinkingWrap.hidden = !state.thinking;
@@ -1586,6 +1600,7 @@ function handleSsePart(part, handlers) {
   }
   if (!dataLines.length) return;
   const data = JSON.parse(dataLines.join("\n"));
+  if (event === "stage") handlers.onStage?.(data.name || "");
   if (event === "thinking") handlers.onThinking?.(data.text || "");
   if (event === "content") handlers.onContent?.(data.text || "");
   if (event === "draftContent") handlers.onDraft?.(data.text || "");

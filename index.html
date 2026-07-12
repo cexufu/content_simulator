@@ -291,6 +291,11 @@
                 <label><input type="radio" name="contentType" value="项目介绍" />项目介绍</label>
                 <label><input type="radio" name="contentType" value="自定义内容" />自定义</label>
               </div>
+              <div class="type-grid workflow-grid" id="workflowGrid">
+                <label><input type="radio" name="workflowMode" value="fast" checked />快速底稿</label>
+                <label><input type="radio" name="workflowMode" value="deep" />深度工作流</label>
+              </div>
+              <p class="mode-hint">快速模式优先出稿；深度模式会追加初稿、评分和文风优化三段流程。</p>
               <textarea id="taskInput" rows="7" placeholder="你想写什么？"></textarea>
               <button class="primary full" id="generateBtn">生成内容</button>
             </section>

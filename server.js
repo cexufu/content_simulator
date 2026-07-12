@@ -20,8 +20,12 @@ const INVITE_CODES = parseInviteCodes(process.env.INVITE_CODES || process.env.AC
 const INVITE_REQUIRED = INVITE_CODES.size > 0 || /^true$/i.test(process.env.INVITE_REQUIRED || "");
 const ROOT = __dirname;
 const BODY_LIMIT = 12 * 1024 * 1024;
+const TOPHUB_CACHE_TTL_MS = Number(process.env.TOPHUB_CACHE_TTL_MS || 10 * 60 * 1000);
+const TOPHUB_FETCH_TIMEOUT_MS = Number(process.env.TOPHUB_FETCH_TIMEOUT_MS || 6000);
+const PUBLIC_PAGE_TIMEOUT_MS = Number(process.env.PUBLIC_PAGE_TIMEOUT_MS || 10000);
 const PUBLIC_FILES = new Set(["/index.html", "/app.js", "/styles.css"]);
 const sessions = new Map();
+const topHubCache = { expiresAt: 0, entries: [] };
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -337,7 +341,7 @@ function decodeBufferText(buffer) {
 
 async function fetchPublicPage(url) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 25000);
+  const timer = setTimeout(() => controller.abort(), PUBLIC_PAGE_TIMEOUT_MS);
   try {
     const response = await fetch(url, {
       signal: controller.signal,
@@ -618,11 +622,38 @@ async function generateWorkflowStream(_req, res, payload) {
   const rules = normalizeRules(payload.rules || profile.rules || []);
   const task = String(payload.task || "").slice(0, 4000);
   const type = String(payload.type || "内容").slice(0, 100);
+  const mode = String(payload.mode || "fast") === "deep" ? "deep" : "fast";
   const focusProfile = normalizeFocusProfile(payload.focusProfile || {});
   sendSseHeaders(res);
 
   try {
-    const trendContext = await collectTrendContext(task).catch(() => ({ hotItems: [], note: "热点读取失败，按用户任务生成。" }));
+    if (mode === "fast") {
+      writeSse(res, "stage", { name: "fast" });
+      await callChatCompletionsStream({
+        instructions: [
+          "你是 Content Simulator 的内容生产后台，服务对象是成熟内容创作者、记者、作者和专业博主。",
+          "本次使用快速模式：不要跑冗长评估流程，直接输出一版可修改、可继续打磨的工作底稿。",
+          "必须尊重用户已经确认的风格画像、长期关注领域、平台偏好和规则；不要替用户强行追热点。",
+          "内容要有清晰观点、具体切口、事实意识和段落推进，避免空泛鸡汤、营销腔、模板化总结。",
+          "如果用户任务缺少事实材料，可以提出审慎表述，但不要编造数据、人物、来源或新闻细节。",
+          "直接输出正文，不要解释过程，不要输出 JSON，不要输出 Markdown 代码块。"
+        ].join("\n"),
+        input: JSON.stringify({
+          task: "生成快速工作底稿",
+          contentType: type,
+          userTask: task,
+          profile,
+          focusProfile,
+          rules
+        }),
+        onThinking: (text) => writeSse(res, "thinking", { text }),
+        onContent: (text) => writeSse(res, "finalContent", { text })
+      });
+      writeSse(res, "done", { ok: true, mode });
+      return;
+    }
+
+    const trendContextPromise = collectTrendContext(task).catch(() => ({ hotItems: [], note: "热点读取失败，按用户任务生成。" }));
     let initialDraft = "";
     let evaluation = "";
 
@@ -632,7 +663,7 @@ async function generateWorkflowStream(_req, res, payload) {
         "你是 Content Simulator 的内容初稿后台。",
         "先不要模仿用户文风，优先生成有信息量、有角度、有表达创造力的内容初稿。",
         "请结合 focusProfile 中的关注领域、长期话题、平台偏好和用户补充说明。",
-        "可参考公开热榜上下文，但不要编造事实；不确定的信息用谨慎表述。",
+        "深度模式下热点资料会在后续评估阶段补入；本阶段不要等待外部热点抓取，也不要编造事实。",
         "直接输出完整初稿正文，不要输出 JSON，不要输出 Markdown 代码块。"
       ].join("\n"),
       input: JSON.stringify({
@@ -640,7 +671,7 @@ async function generateWorkflowStream(_req, res, payload) {
         contentType: type,
         userTask: task,
         focusProfile,
-        trendContext
+        trendContext: { note: "初稿阶段不等待外部热点抓取，优先出稿。" }
       }),
       onThinking: (text) => writeSse(res, "thinking", { text }),
       onContent: (text) => {
@@ -649,12 +680,15 @@ async function generateWorkflowStream(_req, res, payload) {
       }
     });
 
+    const trendContext = await trendContextPromise;
+
     writeSse(res, "stage", { name: "evaluation" });
     await callChatCompletionsStream({
       instructions: [
         "你是 Content Simulator 的内容评估后台。",
         "请对初稿做五维评分：新闻性/时效性、网络传播价值、情绪感染力、故事真实感/贴近性、信息可靠性。",
         "每项给 0-100 分，并用一句短理由说明。",
+        "如果公开热点上下文不足，要明确指出缺口；不要为了显得有依据而虚构来源。",
         "输出要简洁，不要输出 JSON，不要输出 Markdown 表格。"
       ].join("\n"),
       input: JSON.stringify({
@@ -676,7 +710,7 @@ async function generateWorkflowStream(_req, res, payload) {
         "你是 Content Simulator 的文风优化后台。",
         "请基于初稿和五维评分进行二次优化，同时贴近用户已确认的文风画像。",
         "请继续贴合 focusProfile 中的关注领域、长期话题、平台偏好和用户补充说明。",
-        "必须参考 profile 中的常用词、文本风格、节点话术、口头禅、额外规则。",
+        "必须参考 profile 中的常用词、文本风格、节奏话术、开头禁忌、额外规则。",
         "保留初稿中有价值的信息和角度，提升网感、可读性和传播性。",
         "不要解释优化过程，直接输出完整可交付稿件正文，不要输出 JSON，不要输出 Markdown 代码块。"
       ].join("\n"),
@@ -694,7 +728,7 @@ async function generateWorkflowStream(_req, res, payload) {
       onContent: (text) => writeSse(res, "finalContent", { text })
     });
 
-    writeSse(res, "done", { ok: true });
+    writeSse(res, "done", { ok: true, mode });
   } catch (error) {
     writeSse(res, "error", { error: error.message || "工作流生成失败" });
   } finally {
@@ -890,8 +924,13 @@ async function collectHotspotTopicContext({ userSignals, targetDate }) {
 }
 
 async function fetchTopHubEntries() {
+  const now = Date.now();
+  if (topHubCache.entries.length && topHubCache.expiresAt > now) {
+    return topHubCache.entries;
+  }
+
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 6000);
+  const timer = setTimeout(() => controller.abort(), TOPHUB_FETCH_TIMEOUT_MS);
   try {
     const response = await fetch("https://tophub.today/", {
       signal: controller.signal,
@@ -901,10 +940,18 @@ async function fetchTopHubEntries() {
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.7"
       }
     });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    if (!response.ok) throw new Error("HTTP " + response.status);
     const html = await response.text();
     const candidates = extractTopHubCandidates(html);
-    return dedupeHotspotItems(candidates).slice(0, 60);
+    const entries = dedupeHotspotItems(candidates).slice(0, 60);
+    if (entries.length) {
+      topHubCache.entries = entries;
+      topHubCache.expiresAt = Date.now() + TOPHUB_CACHE_TTL_MS;
+    }
+    return entries;
+  } catch (error) {
+    if (topHubCache.entries.length) return topHubCache.entries;
+    throw error;
   } finally {
     clearTimeout(timer);
   }
