@@ -1005,8 +1005,10 @@ async function generateHotspotTopics(_req, res, payload) {
       "只能基于输入里的 TopHub 热榜、公开搜索结果、日期节点和用户画像做筛选与改写，不得编造不存在的热点事件。",
       "TopHub 和公开搜索是平级来源；如果某类来源缺失，保留 missingSources，不要用猜测补齐。",
       "先过滤高风险话题，再做选题推荐；避免消耗他人苦难、暴力血腥、色情赌博、歧视、宗教冲突、纯政治或战争冲突话题。",
-      "新闻性/时效性是最高权重。评分权重：新闻性/时效性30，用户契合度20，网络传播价值15，情绪与社会气候10，差异化切口10，信息可靠性10，风险可控性5。",
-      "输出 Top4，除非用户显式要求更多；每个选题要说明为什么值得做、适合谁做、从哪里切入。",
+      "评分权重：新闻性/热点锚点25，用户适合度25，网络传播价值15，情绪与社会气候15，差异化切口10，信息可靠性5，风险可控性5。不要只追热点，要判断该用户是否真的能讲好。",
+      "允许安全的间接借势：热点不必与用户领域字面直接相关，但必须在 sourceSummary/newsValue/fitReason 中讲清楚桥接逻辑，例如同一种社会情绪、同一类用户需求、同一类风险结构、同一类生活场景或同一类行业转折。",
+      "禁止硬蹭：如果只能靠关键词强连，或者无法说清热点精神与用户需求的关系，就降分或舍弃。安全边界优先，避免消费灾难、隐私、极端冲突和敏感政治事件。",
+      "输出 Top4，除非用户显式要求更多；每个选题要说明为什么值得做、适合谁做、热点如何转译、从哪里切入。",
       "只输出合法 JSON，不要 Markdown，不要解释过程。"
     ].join("\n"),
     input: JSON.stringify({
@@ -1023,10 +1025,10 @@ async function generateHotspotTopics(_req, res, payload) {
           {
             rank: 1,
             title: "选题标题",
-            sourceSummary: "引用到的真实热点来源摘要",
+            sourceSummary: "引用到的真实热点/新闻来源摘要，并说明是直接相关还是间接借势",
             referenceUrls: ["可核验链接"],
-            newsValue: "新闻性/时效性判断",
-            fitReason: "为什么适合该用户",
+            newsValue: "新闻性/热点锚点判断，说明热点精神如何转译到该用户需求",
+            fitReason: "为什么适合该用户，必须说明能力/受众/表达方式的匹配",
             suggestedAngle: "建议切口",
             riskNote: "风险提示或表达边界",
             scores: {
@@ -1144,14 +1146,14 @@ async function collectHotspotTopicContext({ userSignals, targetDate }) {
 
   let topHubItems = topHubResult.status === "fulfilled" ? topHubResult.value : [];
   let searchItems = searchResult.status === "fulfilled" ? searchResult.value : [];
-  topHubItems = topHubItems.filter((item) => !isSensitiveHotTopic(item.title)).slice(0, 36);
-  searchItems = searchItems.filter((item) => !isSensitiveHotTopic(item.title)).slice(0, 24);
+  topHubItems = topHubItems.filter((item) => !isSensitiveHotTopic(item.title)).slice(0, 48);
+  searchItems = searchItems.filter((item) => !isSensitiveHotTopic(item.title)).slice(0, 40);
 
   if (!topHubItems.length) missingSources.push("TopHub 热榜未读取到可用条目");
-  if (!searchItems.length) missingSources.push("公开搜索未读取到可用条目");
+  if (!searchItems.length) missingSources.push("近一周公开新闻未读取到可用条目");
 
   return {
-    sourceRule: "TopHub 与公开搜索平级；日期节点只用于判断社会情绪和内容时机，不可当作真实热点事件。",
+    sourceRule: "TopHub 用于判断平台热度和社会情绪；公开新闻用于事实核验和新闻依据；搜索窗口放宽到近一周。日期节点只用于判断内容时机，不可当作真实热点事件。",
     topHubItems,
     searchItems,
     calendarContext: buildCalendarContext(targetDate),
@@ -1229,13 +1231,17 @@ async function fetchPublicSearchItems(queries) {
   const engines = [
     {
       name: "Bing News",
-      buildUrl: (query) => `https://www.bing.com/news/search?q=${encodeURIComponent(query)}&setlang=zh-CN&cc=CN&FORM=HDRSC6`
+      buildUrl: (query) => `https://www.bing.com/news/search?q=${encodeURIComponent(query)}&setlang=zh-CN&cc=CN&qft=interval%3d%227%22&FORM=HDRSC6`
+    },
+    {
+      name: "百度新闻",
+      buildUrl: (query) => `https://www.baidu.com/s?tn=news&rtt=1&bsst=1&cl=2&rn=20&wd=${encodeURIComponent(query)}`
     }
   ];
-  const jobs = queries.slice(0, 4).flatMap((query) => engines.map((engine) => ({ query, engine })));
+  const jobs = queries.slice(0, 5).flatMap((query) => engines.map((engine) => ({ query, engine })));
   const settled = await Promise.allSettled(jobs.map((job) => fetchSearchPage(job.query, job.engine)));
   const items = settled.flatMap((result) => (result.status === "fulfilled" ? result.value : []));
-  return dedupeHotspotItems(items).filter(isNewsLikeSearchItem).slice(0, 32);
+  return dedupeHotspotItems(items).filter(isNewsLikeSearchItem).slice(0, 40);
 }
 
 async function fetchSearchPage(query, engine) {
@@ -1261,21 +1267,23 @@ async function fetchSearchPage(query, engine) {
 function extractSearchCandidates(html, query, engineName) {
   const items = [];
   const cleanHtml = String(html || "").replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ");
-  const anchorMatches = [...cleanHtml.matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)];
+  const anchorPattern = new RegExp(String.raw`<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>([\s\S]*?)<\/a>`, "gi");
+  const anchorMatches = [...cleanHtml.matchAll(anchorPattern)];
   for (const match of anchorMatches) {
     const title = cleanText(match[2]);
     if (!isUsableHotspotTitle(title)) continue;
-    const url = normalizeHref(match[1], engineName === "百度" ? "https://www.baidu.com/" : "https://www.bing.com/");
+    const base = engineName.includes("百度") ? "https://www.baidu.com/" : "https://www.bing.com/";
+    const url = normalizeHref(match[1], base);
     if (!isLikelyNewsUrl(url, title)) continue;
     items.push({
       title,
-      source: "公开新闻-Bing",
+      source: `公开新闻-${engineName}`,
       query,
       url,
       channel: "news"
     });
   }
-  return items.slice(0, 12);
+  return items.slice(0, 16);
 }
 
 function buildHotspotSearchQueries(userSignals, targetDate) {
@@ -1291,10 +1299,10 @@ function buildHotspotSearchQueries(userSignals, targetDate) {
     ...userSignals.domains,
     ...userSignals.topics
   ]);
-  const uniqueSeeds = (explicitSeeds.length ? explicitSeeds : fallbackSeeds).slice(0, 4);
+  const uniqueSeeds = (explicitSeeds.length ? explicitSeeds : fallbackSeeds).slice(0, 5);
   const dateLabel = targetDate.label.replace(/年|月/g, " ").replace("日", "").trim();
-  if (!uniqueSeeds.length) return [`${dateLabel} 今日热点 新闻`];
-  return uniqueSeeds.map((seed) => `${seed} ${dateLabel} 新闻 近三日`);
+  if (!uniqueSeeds.length) return [`${dateLabel} 近一周 新闻 热点`];
+  return uniqueSeeds.map((seed) => `${seed} 近一周 新闻 热点 行业`);
 }
 
 function buildHotspotUserSignals(profile, focusProfile, rules, keywords) {
@@ -1393,12 +1401,12 @@ function normalizeHotspotScores(scores) {
   normalized.total = Number.isFinite(total)
     ? clamp(Math.round(total), 0, 100)
     : Math.round(
-      normalized.newsworthiness * 0.3 +
-      normalized.userFit * 0.2 +
+      normalized.newsworthiness * 0.25 +
+      normalized.userFit * 0.25 +
       normalized.spreadValue * 0.15 +
-      normalized.socialMood * 0.1 +
+      normalized.socialMood * 0.15 +
       normalized.differentiation * 0.1 +
-      normalized.reliability * 0.1 +
+      normalized.reliability * 0.05 +
       normalized.riskControl * 0.05
     );
   return normalized;
@@ -1472,7 +1480,8 @@ function isNonNewsHost(host) {
 }
 
 function isSearchResultUrl(host, path) {
-  return /(bing\.com|baidu\.com|google\.com|sogou\.com|so\.com)/i.test(host) && /(\/search|\/s\?|\/link\?|\/ck\/)/i.test(path);
+  if (/baidu\.com/i.test(host)) return /\/s\?/i.test(path);
+  return /(bing\.com|google\.com|sogou\.com|so\.com)/i.test(host) && /(\/search|\/link\?|\/ck\/)/i.test(path);
 }
 
 function isNonNewsTitle(title) {
