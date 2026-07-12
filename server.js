@@ -1871,16 +1871,23 @@ function serveStatic(req, res, pathname) {
 
 function readJsonBody(req) {
   return new Promise((resolve, reject) => {
-    let body = "";
+    const chunks = [];
+    let totalLength = 0;
+    let rejected = false;
     req.on("data", (chunk) => {
-      body += chunk;
-      if (body.length > BODY_LIMIT) {
+      totalLength += chunk.length;
+      if (totalLength > BODY_LIMIT) {
+        rejected = true;
         reject(new Error("Request body too large"));
         req.destroy();
+        return;
       }
+      chunks.push(chunk);
     });
     req.on("end", () => {
+      if (rejected) return;
       try {
+        const body = chunks.length ? Buffer.concat(chunks, totalLength).toString("utf8") : "";
         resolve(body ? JSON.parse(body) : {});
       } catch (error) {
         reject(error);

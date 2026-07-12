@@ -1,5 +1,6 @@
 const STORAGE_KEY = "content-simulator-state-v2";
 const AUTH_TOKEN_KEY = "content-simulator-auth-token";
+const MAX_UPLOAD_FILE_BYTES = 8 * 1024 * 1024;
 const LEGACY_STORAGE_KEYS = ["content-simulator-state-v1"];
 const apiBaseFromUrl = new URLSearchParams(window.location.search).get("api");
 if (apiBaseFromUrl) {
@@ -7,6 +8,9 @@ if (apiBaseFromUrl) {
 }
 const API_BASE = (window.CONTENT_SIMULATOR_API_BASE || localStorage.getItem("content-simulator-api-base") || "").replace(/\/$/, "");
 let apiToken = localStorage.getItem(AUTH_TOKEN_KEY) || "";
+let syncingRemoteState = false;
+let remoteSaveInFlight = false;
+let remoteSavePending = false;
 
 const state = {
   accepted: false,
@@ -273,7 +277,20 @@ function scheduleRemoteSave() {
 
 async function saveRemoteState() {
   if (!state.authenticated) return;
-  await postApi("/api/account/save", { state: getPersistedState() });
+  if (remoteSaveInFlight) {
+    remoteSavePending = true;
+    return;
+  }
+  remoteSaveInFlight = true;
+  try {
+    await postApi("/api/account/save", { state: getPersistedState() });
+  } finally {
+    remoteSaveInFlight = false;
+    if (remoteSavePending) {
+      remoteSavePending = false;
+      scheduleRemoteSave();
+    }
+  }
 }
 
 async function syncAccountState() {
@@ -462,6 +479,7 @@ async function handleFiles(event) {
 }
 
 async function addFiles(files) {
+  let changed = false;
   for (const file of files) {
     const extension = file.name.split(".").pop().toLowerCase();
     const source = {
@@ -473,9 +491,12 @@ async function addFiles(files) {
       size: file.size
     };
     state.sources.push(source);
-    saveState();
+    saveState({ localOnly: true });
     renderSources();
     try {
+      if (file.size > MAX_UPLOAD_FILE_BYTES) {
+        throw new Error(`文件超过 ${formatSize(MAX_UPLOAD_FILE_BYTES)}，请先拆分、转成文本，或粘贴正文。`);
+      }
       const result = await parseUploadedFile(file, extension);
       Object.assign(source, {
         type: result.type || extension || "file",
@@ -488,11 +509,12 @@ async function addFiles(files) {
     } catch (error) {
       console.warn(error);
       Object.assign(source, fallbackFileSource(file, extension, error));
-      setApiStatus("文件解析失败", "offline");
+      setApiStatus("文件解析受限", "offline");
     }
-    saveState();
+    changed = true;
     renderSources();
   }
+  if (changed) saveState();
 }
 
 async function parseUploadedFile(file, extension) {
@@ -1636,14 +1658,14 @@ function makeId() {
 }
 
 function fileToBase64(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = String(reader.result || "");
-      resolve(result.includes(",") ? result.split(",").pop() : result);
-    };
-    reader.onerror = () => reject(reader.error || new Error("读取文件失败"));
-    reader.readAsDataURL(file);
+  return file.arrayBuffer().then((buffer) => {
+    const bytes = new Uint8Array(buffer);
+    const chunkSize = 0x8000;
+    let binary = "";
+    for (let index = 0; index < bytes.length; index += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+    }
+    return btoa(binary);
   });
 }
 
