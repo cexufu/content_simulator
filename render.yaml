@@ -19,3 +19,5 @@ services:
         value: enabled
       - key: MODEL_REASONING_EFFORT
         value: high
+      - key: INVITE_CODES
+        sync: false

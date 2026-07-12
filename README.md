@@ -112,6 +112,19 @@ MODEL_API_STYLE=chat
 
 这样前端和后端仍然不用改代码。
 
+
+## 邀请制体验
+
+试用期可以用 `INVITE_CODES` 做轻量邀请制访问控制，不需要数据库。
+
+```bash
+INVITE_CODES=CS-A1B2C3,CS-D4E5F6,CS-G7H8I9
+```
+
+- 多个邀请码用英文逗号、分号或换行分隔。
+- 设置 `INVITE_CODES` 后，除 `/api/health`、静态页面和登录接口外，所有 API 都需要先输入邀请码。
+- 登录态会同时写入 HttpOnly Cookie 和浏览器本地 token，方便同域部署和前后端分离部署。
+- 当前版本不做永久用户表，适合 20 人以内封闭测试；后续可迁移为正式账号、邀请码消耗记录和作者资产库。
 ## API
 
 - `POST /api/resolve-url`：尝试读取网页摘要；受限链接会返回明确提示。

@@ -7,6 +7,17 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
+    <div class="modal-backdrop" id="authModal">
+      <section class="modal">
+        <p class="eyebrow">邀请体验</p>
+        <h1>Content Simulator</h1>
+        <p>这是面向专业内容创作者的封闭测试版本。</p>
+        <p>请输入邀请码进入工作台。</p>
+        <input id="inviteCodeInput" type="text" placeholder="输入邀请码" autocomplete="off" />
+        <p class="auth-error" id="inviteError"></p>
+        <button class="primary full" id="inviteLoginBtn">进入体验</button>
+      </section>
+    </div>
     <div class="modal-backdrop" id="consentModal">
       <section class="modal">
         <p class="eyebrow">友情体验</p>
@@ -27,6 +38,7 @@
         </div>
         <div class="top-actions">
           <span class="status-pill offline" id="apiStatus">本地模式</span>
+          <button class="ghost small" id="logoutBtn">退出邀请码</button>
           <button class="ghost small" id="clearDataBtn">清空本地数据</button>
         </div>
       </header>

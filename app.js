@@ -1,13 +1,18 @@
 const STORAGE_KEY = "content-simulator-state-v2";
+const AUTH_TOKEN_KEY = "content-simulator-auth-token";
 const LEGACY_STORAGE_KEYS = ["content-simulator-state-v1"];
 const apiBaseFromUrl = new URLSearchParams(window.location.search).get("api");
 if (apiBaseFromUrl) {
   localStorage.setItem("content-simulator-api-base", apiBaseFromUrl);
 }
 const API_BASE = (window.CONTENT_SIMULATOR_API_BASE || localStorage.getItem("content-simulator-api-base") || "").replace(/\/$/, "");
+let apiToken = localStorage.getItem(AUTH_TOKEN_KEY) || "";
 
 const state = {
   accepted: false,
+  authenticated: false,
+  authRequired: true,
+  inviteCode: "",
   currentStep: "collect",
   sources: [],
   profile: null,
@@ -40,18 +45,24 @@ const chartColors = ["#356b54", "#415f82", "#a8674b", "#a58342", "#6f746f"];
 
 const els = {};
 
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
   cacheElements();
   loadState();
   bindEvents();
+  await checkAuth();
   renderAll();
 });
 
 function cacheElements() {
   [
+    "authModal",
+    "inviteCodeInput",
+    "inviteLoginBtn",
+    "inviteError",
     "consentModal",
     "acceptConsent",
     "clearDataBtn",
+    "logoutBtn",
     "apiStatus",
     "textInput",
     "addTextBtn",
@@ -112,6 +123,12 @@ function cacheElements() {
 }
 
 function bindEvents() {
+  els.inviteLoginBtn.addEventListener("click", () => loginWithInvite());
+  els.inviteCodeInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") loginWithInvite();
+  });
+  els.logoutBtn.addEventListener("click", () => logoutInvite());
+
   els.acceptConsent.addEventListener("click", () => {
     state.accepted = true;
     saveState();
@@ -208,6 +225,7 @@ function saveState() {
 }
 
 function renderAll() {
+  renderAuth();
   renderConsent();
   renderStep();
   renderSources();
@@ -217,10 +235,88 @@ function renderAll() {
   renderDraft();
 }
 
-function renderConsent() {
-  els.consentModal.classList.toggle("hidden", Boolean(state.accepted));
+function renderAuth() {
+  els.authModal.classList.toggle("hidden", Boolean(state.authenticated));
+  els.logoutBtn.hidden = !state.authenticated || !state.authRequired;
 }
 
+function renderConsent() {
+  els.consentModal.classList.toggle("hidden", !state.authenticated || Boolean(state.accepted));
+}
+
+async function checkAuth() {
+  try {
+    const response = await fetch(`${API_BASE}/api/auth/me`, {
+      cache: "no-store",
+      credentials: "include",
+      headers: buildApiHeaders()
+    });
+    if (!response.ok) throw new Error("auth check failed");
+    const data = await response.json();
+    state.authRequired = Boolean(data.required);
+    state.authenticated = Boolean(data.authenticated || !data.required);
+    state.inviteCode = data.inviteCode || "";
+  } catch (_error) {
+    state.authRequired = true;
+    state.authenticated = false;
+  }
+}
+
+async function loginWithInvite() {
+  const inviteCode = els.inviteCodeInput.value.trim();
+  if (!inviteCode) {
+    els.inviteError.textContent = "请先输入邀请码。";
+    return;
+  }
+  els.inviteLoginBtn.disabled = true;
+  els.inviteLoginBtn.textContent = "验证中";
+  els.inviteError.textContent = "";
+  try {
+    const result = await postApi("/api/auth/login", { inviteCode });
+    apiToken = result.token || "";
+    if (apiToken) localStorage.setItem(AUTH_TOKEN_KEY, apiToken);
+    state.authenticated = true;
+    state.authRequired = Boolean(result.required);
+    state.inviteCode = result.inviteCode || "";
+    els.inviteCodeInput.value = "";
+    setApiStatus("已进入体验", "online");
+    renderAll();
+    await checkApiHealth();
+  } catch (error) {
+    els.inviteError.textContent = error.message || "邀请码验证失败。";
+  } finally {
+    els.inviteLoginBtn.disabled = false;
+    els.inviteLoginBtn.textContent = "进入体验";
+  }
+}
+
+async function logoutInvite() {
+  try {
+    await postApi("/api/auth/logout", {});
+  } catch (_error) {
+    // Local cleanup is enough for the trial gate.
+  }
+  apiToken = "";
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+  state.authenticated = false;
+  state.accepted = false;
+  saveState();
+  renderAll();
+}
+
+function buildApiHeaders(base = {}) {
+  const headers = { ...base };
+  if (apiToken) headers.Authorization = `Bearer ${apiToken}`;
+  return headers;
+}
+
+function handleUnauthorized(response) {
+  if (response.status !== 401) return;
+  apiToken = "";
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+  state.authenticated = false;
+  renderAuth();
+}
 function goStep(step) {
   state.currentStep = step;
   saveState();
@@ -1424,7 +1520,7 @@ function escapeRegExp(value) {
 
 async function checkApiHealth() {
   try {
-    const response = await fetch(`${API_BASE}/api/health`, { cache: "no-store" });
+    const response = await fetch(`${API_BASE}/api/health`, { cache: "no-store", credentials: "include", headers: buildApiHeaders() });
     if (!response.ok) throw new Error("health check failed");
     const data = await response.json();
     setApiStatus(data.configured ? "AI 后台" : "缺少 Key", data.configured ? "online" : "offline");
@@ -1436,13 +1532,15 @@ async function checkApiHealth() {
 async function postApi(path, payload) {
   const response = await fetch(`${API_BASE}${path}`, {
     method: "POST",
-    headers: {
+    headers: buildApiHeaders({
       "Content-Type": "application/json"
-    },
+    }),
+    credentials: "include",
     body: JSON.stringify(payload)
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
+    handleUnauthorized(response);
     throw new Error(data.error || `API request failed: ${response.status}`);
   }
   return data;
@@ -1451,12 +1549,14 @@ async function postApi(path, payload) {
 async function streamApi(path, payload, handlers) {
   const response = await fetch(`${API_BASE}${path}`, {
     method: "POST",
-    headers: {
+    headers: buildApiHeaders({
       "Content-Type": "application/json"
-    },
+    }),
+    credentials: "include",
     body: JSON.stringify(payload)
   });
   if (!response.ok || !response.body) {
+    handleUnauthorized(response);
     const data = await response.json().catch(() => ({}));
     throw new Error(data.error || `Stream request failed: ${response.status}`);
   }

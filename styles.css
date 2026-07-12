@@ -918,3 +918,16 @@ input:focus {
     width: 100%;
   }
 }
+
+
+.auth-error {
+  min-height: 20px;
+  margin: 8px 0 12px;
+  color: #a33d2f;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.modal input[type="text"] {
+  margin: 8px 0 0;
+}

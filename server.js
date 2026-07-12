@@ -1,6 +1,7 @@
 const fs = require("fs");
 const http = require("http");
 const path = require("path");
+const crypto = require("crypto");
 const zlib = require("zlib");
 
 loadEnv();
@@ -15,9 +16,12 @@ const MODEL_API_STYLE = process.env.MODEL_API_STYLE || process.env.OPENAI_API_ST
 const MODEL_THINKING = process.env.MODEL_THINKING || "enabled";
 const MODEL_REASONING_EFFORT = process.env.MODEL_REASONING_EFFORT || "high";
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "";
+const INVITE_CODES = parseInviteCodes(process.env.INVITE_CODES || process.env.ACCESS_CODES || "");
+const INVITE_REQUIRED = INVITE_CODES.size > 0 || /^true$/i.test(process.env.INVITE_REQUIRED || "");
 const ROOT = __dirname;
 const BODY_LIMIT = 12 * 1024 * 1024;
 const PUBLIC_FILES = new Set(["/index.html", "/app.js", "/styles.css"]);
+const sessions = new Map();
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -43,7 +47,17 @@ const server = http.createServer(async (req, res) => {
         model: MODEL_NAME,
         apiStyle: MODEL_API_STYLE,
         thinking: MODEL_THINKING,
-        baseUrl: maskBaseUrl(MODEL_BASE_URL)
+        baseUrl: maskBaseUrl(MODEL_BASE_URL),
+        inviteRequired: INVITE_REQUIRED
+      });
+    }
+
+    if (url.pathname === "/api/auth/me") {
+      const session = getAuthSession(req);
+      return sendJson(res, 200, {
+        required: INVITE_REQUIRED,
+        authenticated: Boolean(session || !INVITE_REQUIRED),
+        inviteCode: session?.inviteCode || ""
       });
     }
 
@@ -68,6 +82,13 @@ async function handleApi(req, res, pathname) {
   }
 
   const payload = await readJsonBody(req);
+  if (pathname === "/api/auth/login") return loginWithInvite(req, res, payload);
+  if (pathname === "/api/auth/logout") return logout(req, res);
+
+  if (INVITE_REQUIRED && !getAuthSession(req)) {
+    return sendJson(res, 401, { error: "请先输入邀请码进入体验。" });
+  }
+
   if (pathname === "/api/resolve-url") return resolveUrl(req, res, payload);
   if (pathname === "/api/parse-file") return parseFile(req, res, payload);
 
@@ -86,6 +107,36 @@ async function handleApi(req, res, pathname) {
   return sendJson(res, 404, { error: "API not found" });
 }
 
+function loginWithInvite(req, res, payload) {
+  if (!INVITE_REQUIRED) {
+    const token = createSession("open");
+    return sendJson(
+      res,
+      200,
+      { ok: true, token, inviteCode: "open", required: false },
+      { "Set-Cookie": buildSessionCookie(req, token) }
+    );
+  }
+
+  const inviteCode = normalizeInviteCode(payload.inviteCode);
+  if (!inviteCode || !INVITE_CODES.has(inviteCode)) {
+    return sendJson(res, 401, { error: "邀请码不正确，请确认后重试。" });
+  }
+
+  const token = createSession(inviteCode);
+  return sendJson(
+    res,
+    200,
+    { ok: true, token, inviteCode, required: true },
+    { "Set-Cookie": buildSessionCookie(req, token) }
+  );
+}
+
+function logout(req, res) {
+  const token = getAuthToken(req);
+  if (token) sessions.delete(token);
+  return sendJson(res, 200, { ok: true }, { "Set-Cookie": "cs_session=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly" });
+}
 async function resolveUrl(_req, res, payload) {
   const rawUrl = String(payload.url || "").trim();
   let parsedUrl;
@@ -1489,12 +1540,74 @@ function cleanText(value) {
     .trim();
 }
 
+function parseInviteCodes(value) {
+  return new Set(
+    String(value || "")
+      .split(/[,;\n]/)
+      .map(normalizeInviteCode)
+      .filter(Boolean)
+  );
+}
+
+function normalizeInviteCode(value) {
+  return String(value || "").trim().toUpperCase().replace(/\s+/g, "");
+}
+
+function createSession(inviteCode) {
+  const token = crypto.randomBytes(24).toString("base64url");
+  sessions.set(token, {
+    token,
+    inviteCode,
+    createdAt: Date.now(),
+    expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000
+  });
+  return token;
+}
+
+function getAuthSession(req) {
+  if (!INVITE_REQUIRED) return { inviteCode: "open" };
+  const token = getAuthToken(req);
+  if (!token) return null;
+  const session = sessions.get(token);
+  if (!session) return null;
+  if (session.expiresAt <= Date.now()) {
+    sessions.delete(token);
+    return null;
+  }
+  return session;
+}
+
+function getAuthToken(req) {
+  const authorization = req.headers.authorization || "";
+  const bearer = authorization.match(/^Bearer\s+(.+)$/i)?.[1];
+  const cookieToken = parseCookies(req.headers.cookie || "").cs_session;
+  return bearer || cookieToken || "";
+}
+
+function parseCookies(header) {
+  const cookies = {};
+  String(header || "").split(";").forEach((part) => {
+    const [key, ...rest] = part.trim().split("=");
+    if (key) cookies[key] = decodeURIComponent(rest.join("="));
+  });
+  return cookies;
+}
+
+function buildSessionCookie(req, token) {
+  const secure = isSecureRequest(req) ? "; Secure" : "";
+  return `cs_session=${encodeURIComponent(token)}; Path=/; Max-Age=${30 * 24 * 60 * 60}; SameSite=Lax; HttpOnly${secure}`;
+}
+
+function isSecureRequest(req) {
+  return req.headers["x-forwarded-proto"] === "https" || /^https:/i.test(req.headers.origin || "");
+}
 function handleCors(req, res) {
   const origin = req.headers.origin;
   if (ALLOWED_ORIGIN && origin && (ALLOWED_ORIGIN === "*" || ALLOWED_ORIGIN === origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Vary", "Origin");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    res.setHeader("Access-Control-Allow-Credentials", "true");
     res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   }
   if (req.method === "OPTIONS") {
@@ -1554,10 +1667,11 @@ function readJsonBody(req) {
   });
 }
 
-function sendJson(res, status, payload) {
+function sendJson(res, status, payload, headers = {}) {
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
-    "Cache-Control": "no-store"
+    "Cache-Control": "no-store",
+    ...headers
   });
   res.end(JSON.stringify(payload));
 }
