@@ -501,12 +501,28 @@ function extractDocxXmlText(xml) {
     .replace(/<w:br\s*\/>/g, "\n")
     .split(/<\/w:p>/)
     .map((paragraph) => {
-      const runs = [...paragraph.matchAll(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g)].map((match) => decodeHtml(match[1]));
+      const runs = [...paragraph.matchAll(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g)]
+        .map((match) => cleanDocxTextRun(match[1]))
+        .filter(Boolean);
       return runs.join("");
     })
     .map((line) => line.replace(/\s+/g, " ").trim())
     .filter(Boolean)
     .join("\n");
+}
+
+function cleanDocxTextRun(value) {
+  const decoded = decodeHtml(value);
+  const compact = decoded.trim();
+  if (!compact) return "";
+  if (isEmbeddedWordXml(compact)) return "";
+  return decoded;
+}
+
+function isEmbeddedWordXml(value) {
+  if (!/^<\/?[a-z]+:/i.test(value)) return false;
+  const tagCount = (value.match(/<\/?[a-z]+:[^>]+>/gi) || []).length;
+  return tagCount >= 2 || /<w:(p|r|sdt|pPr|rPr|tbl|tr|tc)\b/i.test(value);
 }
 
 function decodeBufferText(buffer) {
@@ -547,19 +563,49 @@ function extractHtmlSummary(html) {
       html.match(/<meta[^>]+content=["']([^"']*)["'][^>]+name=["']description["'][^>]*>/i)?.[1] ||
       "").trim()
   );
+  const focusedHtml = extractArticleHtml(html) || html;
   const text = decodeHtml(
-    html
+    focusedHtml
       .replace(/<script[\s\S]*?<\/script>/gi, " ")
       .replace(/<style[\s\S]*?<\/style>/gi, " ")
       .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
+      .replace(/<img\b[^>]*>/gi, " ")
+      .replace(/<br\s*\/?\s*>/gi, "\n")
+      .replace(/<\/p>/gi, "\n")
+      .replace(/<\/div>/gi, "\n")
       .replace(/<[^>]+>/g, " ")
-      .replace(/\s+/g, " ")
+      .replace(/[ \t\f\v]+/g, " ")
+      .replace(/\n\s+/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
       .trim()
   );
   return {
     title,
-    text: [title, description, text].filter(Boolean).join("\n\n").slice(0, 12000)
+    text: [title, description, text].filter(Boolean).join("\n\n").slice(0, 12000),
   };
+}
+
+function extractArticleHtml(html) {
+  const articleMatch = html.match(/<article\b[^>]*>([\s\S]*?)<\/article>/i);
+  if (articleMatch && cleanText(articleMatch[1]).length > 200) return articleMatch[1];
+  const peopleBox = sliceHtmlFromClass(html, "box_con", ["<!--text_con end-->", "<div class=\"edit", "<div class='edit", "<div class=\"page", "<div class='page"]);
+  if (peopleBox && cleanText(peopleBox).length > 200) return peopleBox;
+  const commonContent = sliceHtmlFromClass(html, "article", ["</article>"]) || sliceHtmlFromClass(html, "content", ["<!--", "<footer", "<div class=\"footer", "<div class='footer"]);
+  if (commonContent && cleanText(commonContent).length > 200) return commonContent;
+  return "";
+}
+
+function sliceHtmlFromClass(html, className, endMarkers) {
+  const classPattern = new RegExp("<[^>]+class=[\"'][^\"']*\\b" + escapeRegExp(className) + "\\b[^\"']*[\"'][^>]*>", "i");
+  const match = classPattern.exec(html);
+  if (!match) return "";
+  const start = match.index;
+  const rest = html.slice(start);
+  const end = endMarkers
+    .map((marker) => rest.indexOf(marker))
+    .filter((index) => index > match[0].length)
+    .sort((a, b) => a - b)[0];
+  return end ? rest.slice(0, end) : rest.slice(0, 20000);
 }
 
 function detectCharset(contentType, htmlHead) {
@@ -1761,6 +1807,10 @@ function cleanText(value) {
   return decodeHtml(String(value || "").replace(/<[^>]+>/g, " "))
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function parseInviteCodes(value) {
