@@ -943,3 +943,128 @@ input:focus {
 .modal input[type="text"] {
   margin: 8px 0 0;
 }
+
+
+.related-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin: -4px 0 12px;
+}
+
+.related-news-list {
+  display: grid;
+  gap: 10px;
+}
+
+.related-news-row {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) 24px;
+  gap: 12px;
+  align-items: center;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fffefa;
+  color: var(--ink);
+  text-decoration: none;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.related-news-row:hover {
+  border-color: var(--green);
+  transform: translateY(-1px);
+}
+
+.related-rank,
+.topic-rank-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #e9f0f7;
+  color: #315173;
+  font-weight: 800;
+}
+
+.related-news-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.related-news-main strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.related-news-main small,
+.related-news-main em {
+  color: var(--muted);
+  font-style: normal;
+  line-height: 1.5;
+}
+
+.related-open {
+  color: var(--green);
+  font-weight: 800;
+}
+
+.knowledge-panel textarea {
+  margin-bottom: 10px;
+}
+
+.topic-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.topic-large-card {
+  padding: 22px;
+}
+
+.topic-card-head {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.topic-card-head strong {
+  margin: 0;
+  font-size: 20px;
+  line-height: 1.35;
+}
+
+.topic-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.topic-tags span {
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #536579;
+  padding: 4px 9px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.topic-summary {
+  color: var(--ink) !important;
+}
+
+.topic-reason {
+  border-radius: 8px;
+  background: #f7f9fb;
+  padding: 12px 14px;
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.topic-risk {
+  color: #8a5a25 !important;
+}

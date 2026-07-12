@@ -100,6 +100,7 @@ async function handleApi(req, res, pathname) {
   if (pathname === "/api/account/clear") return clearAccountState(req, res, session);
 
   if (pathname === "/api/resolve-url") return resolveUrl(req, res, payload);
+  if (pathname === "/api/related-info") return relatedInfo(req, res, payload);
   if (pathname === "/api/parse-file") return parseFile(req, res, payload);
 
   if (!MODEL_API_KEY) {
@@ -199,7 +200,10 @@ function sanitizeAccountState(value) {
     "profileChat",
     "deliverChat",
     "workflowMode",
-    "workflowStage"
+    "workflowStage",
+    "knowledgeNotes",
+    "relatedItems",
+    "relatedStatus"
   ]);
   const state = {};
   for (const [key, item] of Object.entries(value)) {
@@ -209,6 +213,7 @@ function sanitizeAccountState(value) {
   if (Array.isArray(state.rules)) state.rules = state.rules.slice(0, 80);
   if (Array.isArray(state.profileChat)) state.profileChat = state.profileChat.slice(-40);
   if (Array.isArray(state.deliverChat)) state.deliverChat = state.deliverChat.slice(-40);
+  if (Array.isArray(state.relatedItems)) state.relatedItems = state.relatedItems.slice(0, 12);
   return state;
 }
 
@@ -285,6 +290,76 @@ async function resolveUrl(_req, res, payload) {
     }
     return sendJson(res, 200, buildLimitedWebSource(parsedUrl.href, "网页链接", `当前后端没有读取到正文。错误：${error.message}`));
   }
+}
+
+async function relatedInfo(_req, res, payload) {
+  const profile = normalizeProfile(payload.profile || {}, payload.rules || []);
+  const focusProfile = normalizeFocusProfile(payload.focusProfile || {});
+  const rules = normalizeRules(payload.rules || profile.rules || []);
+  const keywords = String(payload.keywords || payload.query || "").slice(0, 1000).trim();
+  const userSignals = buildHotspotUserSignals(profile, focusProfile, rules, keywords);
+  if (!hasHotspotUserSignals(userSignals)) {
+    return sendJson(res, 200, {
+      generatedAt: new Date().toISOString(),
+      items: [],
+      missingSources: [],
+      message: "请先确认风格画像，或补充关注方向/知识库后再刷新相关信息。"
+    });
+  }
+  const targetDate = normalizeTargetDate(payload.date);
+  const trendContext = await collectHotspotTopicContext({ userSignals, targetDate });
+  const items = buildRelatedInfoItems(trendContext, userSignals).slice(0, 8);
+  return sendJson(res, 200, {
+    generatedAt: new Date().toISOString(),
+    targetDate,
+    items,
+    missingSources: trendContext.missingSources,
+    sourceCount: {
+      topHub: trendContext.topHubItems.length,
+      search: trendContext.searchItems.length
+    },
+    message: items.length ? "已读取公开来源，优先展示可点击核验的信息。" : "没有读取到可核验的公开信息，请补充更具体的关键词。"
+  });
+}
+
+function buildRelatedInfoItems(trendContext, userSignals) {
+  const seeds = new Set([
+    ...userSignals.manualKeywords,
+    ...userSignals.domains,
+    ...userSignals.topics,
+    ...extractSearchWords(userSignals.notes || ""),
+    ...extractSearchWords(userSignals.knowledgeNotes || "")
+  ].map((item) => String(item || "").toLowerCase()).filter(Boolean));
+  const rawItems = [...trendContext.searchItems, ...trendContext.topHubItems];
+  return rawItems
+    .filter((item) => item && item.title && item.url)
+    .map((item) => {
+      const title = String(item.title || "");
+      const lowered = title.toLowerCase();
+      const relevance = Array.from(seeds).reduce((score, seed) => score + (seed && lowered.includes(seed) ? 2 : 0), 0);
+      const sourceBonus = item.channel === "search" ? 2 : 1;
+      const score = relevance + sourceBonus;
+      return { item, score };
+    })
+    .filter(({ item, score }) => score > 0 || item.channel === "search")
+    .sort((a, b) => b.score - a.score)
+    .map(({ item }, index) => ({
+      rank: index + 1,
+      title: String(item.title || "").slice(0, 120),
+      source: item.source || "公开来源",
+      channel: item.channel || "search",
+      url: item.url,
+      publishedAt: item.publishedAt || item.date || "",
+      reason: buildRelatedInfoReason(item, userSignals),
+      category: item.channel === "tophub" ? "热榜线索" : "公开新闻",
+      trend: item.channel === "tophub" ? "平台讨论" : "新闻/行业信息"
+    }));
+}
+
+function buildRelatedInfoReason(item, userSignals) {
+  const topic = userSignals.manualKeywords[0] || userSignals.topics[0] || userSignals.domains[0] || userSignals.notes || "关注方向";
+  if (item.channel === "tophub") return `来自热榜，可用于判断“${topic}”附近的平台情绪和公共讨论。`;
+  return `与“${topic}”相关的公开信息，可作为选题依据、背景材料或案例线索。`;
 }
 
 async function parseFile(_req, res, payload) {

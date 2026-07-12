@@ -190,6 +190,15 @@
             <button class="secondary" id="saveFocusBtn">保存关注画像</button>
           </section>
 
+          <section class="panel wide knowledge-panel">
+            <div class="panel-title">
+              <h3>知识库补充</h3>
+              <span id="knowledgeStatus">行业知识 / 历史案例 / 背景判断</span>
+            </div>
+            <textarea id="knowledgeInput" rows="5" placeholder="补充你希望系统长期记住的行业知识、人物/机构背景、历史案例、内容边界、常用资料口径。"></textarea>
+            <button class="secondary" id="saveKnowledgeBtn">保存知识库</button>
+          </section>
+
           <section class="panel wide">
             <div class="panel-title">
               <h3>额外规则</h3>
@@ -228,9 +237,12 @@
         <section class="panel related-panel">
           <div class="panel-title">
             <h3>相关信息</h3>
-            <span>基于关注画像自动推荐</span>
+            <span>公开新闻 / 行业动态 / 热榜线索</span>
           </div>
-          <div class="insight-list" id="relatedInfoList"></div>
+          <div class="related-toolbar">
+            <button class="ghost small" id="relatedRefreshBtn">刷新公开信息</button>
+          </div>
+          <div class="insight-list related-news-list" id="relatedInfoList"></div>
         </section>
 
         <div class="workbench-tabs">

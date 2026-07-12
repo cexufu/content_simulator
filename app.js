@@ -19,9 +19,12 @@ const state = {
   profile: null,
   rules: [],
   focusNotes: "",
+  knowledgeNotes: "",
   currentWorkbench: "hotspot",
   selectedTopic: "",
   hotspotTopics: [],
+  relatedItems: [],
+  relatedStatus: "确认画像后刷新公开信息。",
   hotspotStatus: "基于已确认画像生成；没有真实选题前不展示卡片。",
   hotspotMeta: null,
   initialDraft: "",
@@ -88,6 +91,9 @@ function cacheElements() {
     "focusTags",
     "focusInput",
     "saveFocusBtn",
+    "knowledgeInput",
+    "saveKnowledgeBtn",
+    "knowledgeStatus",
     "rulesInput",
     "saveRulesBtn",
     "ruleTags",
@@ -99,6 +105,7 @@ function cacheElements() {
     "taskInput",
     "generateBtn",
     "relatedInfoList",
+    "relatedRefreshBtn",
     "hotspotGenerateBtn",
     "hotspotStatus",
     "hotspotList",
@@ -158,6 +165,7 @@ function bindEvents() {
   els.addUrlBtn.addEventListener("click", () => addUrlSource());
   els.analyzeBtn.addEventListener("click", () => analyzeAndGo());
   els.saveFocusBtn.addEventListener("click", saveFocusNotes);
+  els.saveKnowledgeBtn.addEventListener("click", saveKnowledgeNotes);
   els.saveRulesBtn.addEventListener("click", saveRulesFromInput);
   els.profileChatBtn.addEventListener("click", () => sendProfileMessage());
   els.profileChatInput.addEventListener("keydown", (event) => {
@@ -169,6 +177,7 @@ function bindEvents() {
     goStep("deliver");
   });
   els.generateBtn.addEventListener("click", () => generateDraft());
+  els.relatedRefreshBtn.addEventListener("click", () => refreshRelatedInfo());
   els.hotspotGenerateBtn.addEventListener("click", () => generateHotspotTopics());
   els.hotspotList.addEventListener("click", (event) => {
     const button = event.target.closest("[data-topic-action]");
@@ -202,9 +211,12 @@ function resetWorkingState(options = {}) {
     profile: null,
     rules: [],
     focusNotes: "",
+    knowledgeNotes: "",
     currentWorkbench: "hotspot",
     selectedTopic: "",
     hotspotTopics: [],
+    relatedItems: [],
+    relatedStatus: "确认画像后刷新公开信息。",
     hotspotStatus: "基于已确认画像生成；没有真实选题前不展示卡片。",
     hotspotMeta: null,
     initialDraft: "",
@@ -863,6 +875,25 @@ function getFocusContext(profile = state.profile) {
   };
 }
 
+function renderKnowledgeBase() {
+  if (!els.knowledgeInput) return;
+  if (document.activeElement !== els.knowledgeInput) {
+    els.knowledgeInput.value = state.knowledgeNotes || "";
+  }
+  const count = (state.knowledgeNotes || "").trim().length;
+  els.knowledgeStatus.textContent = count ? `已记录 ${count} 字背景知识，会参与选题和写作。` : "可补充行业知识、历史案例、人物/机构背景和长期判断。";
+}
+
+function saveKnowledgeNotes() {
+  state.knowledgeNotes = els.knowledgeInput.value.trim();
+  resetHotspotResults("知识库已更新，可以重新刷新相关信息或生成热点选题。");
+  state.relatedItems = [];
+  state.relatedStatus = "知识库已更新，请刷新公开信息。";
+  saveState();
+  renderKnowledgeBase();
+  renderWorkbench();
+}
+
 function saveFocusNotes() {
   state.focusNotes = els.focusInput.value.trim();
   resetHotspotResults("关注画像已更新，可以重新生成热点选题。");
@@ -895,43 +926,67 @@ function renderWorkbench() {
 
 function renderRelatedInfo() {
   const focus = getFocusContext();
-  const topic = focus.topics[0] || focus.domains[0] || state.focusNotes || "";
-  const domain = focus.domains[0] || state.focusNotes || "";
-  if (!topic && !domain) {
-    els.relatedInfoList.innerHTML = '<div class="empty-state">确认风格或补充关注画像后，再推荐相关信息。</div>';
+  const hasFocus = Boolean(focus.notes || focus.knowledgeNotes || focus.domains.length || focus.topics.length);
+  if (!hasFocus) {
+    els.relatedInfoList.innerHTML = `<div class="empty-state">确认风格画像，或补充关注画像/知识库后，再刷新公开信息。</div>`;
     return;
   }
-  const items = [
-    {
-      source: "公开新闻检索",
-      title: `${topic} 相关新闻`,
-      body: `查看「${topic}」近期新闻、公共讨论和背景信息。`,
-      url: buildNewsSearchUrl(`${topic} 新闻`)
-    },
-    {
-      source: "领域动态",
-      title: `${domain || topic} 行业动态`,
-      body: `围绕「${domain || topic}」补充行业变化、案例和趋势材料。`,
-      url: buildNewsSearchUrl(`${domain || topic} 行业动态`)
-    },
-    {
-      source: "热榜入口",
-      title: "今日热点与平台讨论",
-      body: "查看全网热榜，判断今天有哪些公共议题和平台情绪。",
-      url: "https://tophub.today/"
-    }
-  ];
-  els.relatedInfoList.innerHTML = items
-    .map(
-      (item) => `
-        <a class="news-card" href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">
-          <span>${escapeHtml(item.source)}</span>
-          <strong>${escapeHtml(item.title)}</strong>
-          <p>${escapeHtml(item.body)}</p>
-        </a>
-      `
-    )
+  if (!state.relatedItems.length) {
+    els.relatedInfoList.innerHTML = `<div class="empty-state">${escapeHtml(state.relatedStatus || "点击刷新公开信息，读取近三日新闻、行业动态和热榜线索。")}</div>`;
+    return;
+  }
+  els.relatedInfoList.innerHTML = state.relatedItems
+    .map((item, index) => renderRelatedInfoItem(item, index))
     .join("");
+}
+
+function renderRelatedInfoItem(item, index) {
+  const href = safeUrl(item.url);
+  const meta = [item.source || "公开来源", item.publishedAt || item.trend || "可点击核验"].filter(Boolean).join(" · ");
+  const body = item.reason || "可作为选题依据、背景材料或案例线索。";
+  return `
+    <a class="related-news-row" href="${escapeHtml(href || "#")}" target="_blank" rel="noopener noreferrer">
+      <span class="related-rank">${index + 1}</span>
+      <span class="related-news-main">
+        <strong>${escapeHtml(item.title || "未命名信息")}</strong>
+        <small>${escapeHtml(meta)}</small>
+        <em>${escapeHtml(body)}</em>
+      </span>
+      <span class="related-open">↗</span>
+    </a>
+  `;
+}
+
+async function refreshRelatedInfo() {
+  const focus = getFocusContext();
+  if (!(focus.notes || focus.knowledgeNotes || focus.domains.length || focus.topics.length)) {
+    state.relatedItems = [];
+    state.relatedStatus = "请先确认风格画像，或补充关注方向/知识库。";
+    renderRelatedInfo();
+    return;
+  }
+  await withBusy(els.relatedRefreshBtn, "读取中", async () => {
+    try {
+      state.relatedStatus = "正在读取公开新闻、行业动态和热榜线索...";
+      renderRelatedInfo();
+      const result = await postApi("/api/related-info", {
+        profile: state.profile || {},
+        focusProfile: focus,
+        rules: state.rules,
+        keywords: ""
+      });
+      state.relatedItems = Array.isArray(result.items) ? result.items : [];
+      state.relatedStatus = result.message || (state.relatedItems.length ? "已读取公开信息。" : "没有读取到可核验信息。");
+      setApiStatus("公开信息已刷新", "online");
+    } catch (error) {
+      console.warn(error);
+      state.relatedItems = [];
+      state.relatedStatus = error.message || "公开信息读取失败。";
+      setApiStatus("信息读取失败", "offline");
+    }
+    saveState();
+    renderRelatedInfo();
+  });
 }
 
 function buildNewsSearchUrl(query) {
@@ -953,29 +1008,33 @@ function renderHotspotCard(item, index) {
     .map((url, linkIndex) => {
       const href = safeUrl(url);
       if (!href) return "";
-      return `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">来源${linkIndex + 1}</a>`;
+      return `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">来源 ${linkIndex + 1}</a>`;
     })
     .filter(Boolean)
     .join("");
+  const tags = [item.category || "热点借势", item.trend || "公共讨论"].filter(Boolean);
   return `
-    <div class="topic-item topic-result">
-      <div class="topic-rank">Top ${item.rank || index + 1}</div>
-      <strong>${escapeHtml(item.title)}</strong>
+    <div class="topic-item topic-result topic-large-card">
+      <div class="topic-card-head">
+        <span class="topic-rank-badge">${item.rank || index + 1}</span>
+        <strong>${escapeHtml(item.title)}</strong>
+      </div>
+      <div class="topic-tags">${tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("")}</div>
+      ${item.sourceSummary ? `<p class="topic-summary">${escapeHtml(item.sourceSummary)}</p>` : ""}
+      ${item.newsValue ? `<div class="topic-reason"><b>为什么现在做：</b>${escapeHtml(item.newsValue)}</div>` : ""}
+      ${item.fitReason ? `<div class="topic-reason"><b>为什么适合你：</b>${escapeHtml(item.fitReason)}</div>` : ""}
+      ${item.suggestedAngle ? `<div class="topic-reason"><b>建议切口：</b>${escapeHtml(item.suggestedAngle)}</div>` : ""}
       <div class="topic-score-row">
         <span>总分 ${formatScore(scores.total)}</span>
         <span>新闻性 ${formatScore(scores.newsworthiness)}</span>
         <span>契合 ${formatScore(scores.userFit)}</span>
         <span>传播 ${formatScore(scores.spreadValue)}</span>
       </div>
-      ${item.sourceSummary ? `<p>${escapeHtml(item.sourceSummary)}</p>` : ""}
-      ${item.newsValue ? `<p><b>新闻性：</b>${escapeHtml(item.newsValue)}</p>` : ""}
-      ${item.fitReason ? `<p><b>适配：</b>${escapeHtml(item.fitReason)}</p>` : ""}
-      ${item.suggestedAngle ? `<p><b>切口：</b>${escapeHtml(item.suggestedAngle)}</p>` : ""}
-      ${item.riskNote ? `<p><b>边界：</b>${escapeHtml(item.riskNote)}</p>` : ""}
+      ${item.riskNote ? `<p class="topic-risk">边界：${escapeHtml(item.riskNote)}</p>` : ""}
       ${sourceLinks ? `<div class="topic-sources">${sourceLinks}</div>` : ""}
       <div class="topic-actions">
-        <button class="ghost small" data-topic-action="research" data-topic-index="${index}">钻探</button>
-        <button class="secondary small" data-topic-action="produce" data-topic-index="${index}">写这个</button>
+        <button class="ghost small" data-topic-action="research" data-topic-index="${index}">话题钻探</button>
+        <button class="secondary small" data-topic-action="produce" data-topic-index="${index}">生成策划案</button>
       </div>
     </div>
   `;
