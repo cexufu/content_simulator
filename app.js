@@ -235,6 +235,29 @@ function resetWorkingState(options = {}) {
   });
 }
 
+function isInterruptedParsingSource(source) {
+  if (!source || source.body) return false;
+  const status = String(source.status || "");
+  return /解析中|读取中|上传中/.test(status);
+}
+
+function normalizeInterruptedSources() {
+  if (!Array.isArray(state.sources)) return false;
+  let changed = false;
+  state.sources = state.sources.map((source) => {
+    if (!isInterruptedParsingSource(source)) return source;
+    changed = true;
+    return {
+      ...source,
+      status: "解析中断，请删除后重新上传",
+      body: "文件解析中断，浏览器已无法自动恢复原始文件。请删除后重新上传，或直接粘贴正文。",
+      limited: true,
+      interrupted: true
+    };
+  });
+  return changed;
+}
+
 function loadState() {
   LEGACY_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
   const raw = localStorage.getItem(STORAGE_KEY);
@@ -242,6 +265,9 @@ function loadState() {
   try {
     const saved = JSON.parse(raw);
     Object.assign(state, saved);
+    if (normalizeInterruptedSources()) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(getPersistedState()));
+    }
   } catch (error) {
     console.warn("Failed to restore state", error);
   }
@@ -307,7 +333,11 @@ async function syncAccountState() {
       state.accountInviteCode = state.inviteCode;
       Object.assign(state, result.state, authState);
       state.accountInviteCode = state.inviteCode;
+      const normalizedInterrupted = normalizeInterruptedSources();
       localStorage.setItem(STORAGE_KEY, JSON.stringify(getPersistedState()));
+      if (normalizedInterrupted) {
+        await saveRemoteState();
+      }
     } else {
       state.accountInviteCode = state.inviteCode;
       await saveRemoteState();
@@ -488,7 +518,8 @@ async function addFiles(files) {
       title: file.name,
       body: "",
       status: "解析中",
-      size: file.size
+      size: file.size,
+      createdAt: new Date().toISOString()
     };
     state.sources.push(source);
     saveState({ localOnly: true });
@@ -503,7 +534,8 @@ async function addFiles(files) {
         title: result.title || file.name,
         body: result.body || "",
         status: result.status || "已读取",
-        limited: Boolean(result.limited)
+        limited: Boolean(result.limited),
+        updatedAt: new Date().toISOString()
       });
       setApiStatus(source.limited ? "文件需补充" : "文件已读取", source.limited ? "offline" : "online");
     } catch (error) {
