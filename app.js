@@ -13,6 +13,7 @@ const state = {
   authenticated: false,
   authRequired: true,
   inviteCode: "",
+  accountInviteCode: "",
   currentStep: "collect",
   sources: [],
   profile: null,
@@ -138,28 +139,12 @@ function bindEvents() {
   });
 
   els.clearDataBtn.addEventListener("click", () => {
-    if (!window.confirm("确认清空本地数据？")) return;
+    if (!window.confirm("确认清空当前邀请码下的资料？这会同时清空本地和服务端保存的数据。")) return;
+    clearTimeout(remoteSaveTimer);
     localStorage.removeItem(STORAGE_KEY);
-    Object.assign(state, {
-      accepted: true,
-      currentStep: "collect",
-      sources: [],
-      profile: null,
-      rules: [],
-      focusNotes: "",
-      currentWorkbench: "hotspot",
-      selectedTopic: "",
-      hotspotTopics: [],
-      hotspotStatus: "基于已确认画像生成；没有真实选题前不展示卡片。",
-      hotspotMeta: null,
-      initialDraft: "",
-      evaluation: "",
-      draft: "",
-      finalized: false,
-      thinking: "",
-      profileChat: [],
-      deliverChat: []
-    });
+    clearRemoteState();
+    resetWorkingState({ accepted: true });
+
     renderAll();
   });
 
@@ -209,6 +194,31 @@ function bindEvents() {
   checkApiHealth();
 }
 
+function resetWorkingState(options = {}) {
+  Object.assign(state, {
+    accepted: options.accepted ?? true,
+    currentStep: "collect",
+    sources: [],
+    profile: null,
+    rules: [],
+    focusNotes: "",
+    currentWorkbench: "hotspot",
+    selectedTopic: "",
+    hotspotTopics: [],
+    hotspotStatus: "基于已确认画像生成；没有真实选题前不展示卡片。",
+    hotspotMeta: null,
+    initialDraft: "",
+    evaluation: "",
+    draft: "",
+    finalized: false,
+    thinking: "",
+    profileChat: [],
+    deliverChat: [],
+    workflowMode: "fast",
+    workflowStage: ""
+  });
+}
+
 function loadState() {
   LEGACY_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
   const raw = localStorage.getItem(STORAGE_KEY);
@@ -221,9 +231,72 @@ function loadState() {
   }
 }
 
-function saveState() {
-  const { hotspotTopics, hotspotStatus, hotspotMeta, ...persisted } = state;
+function getPersistedState() {
+  const {
+    authenticated,
+    authRequired,
+    inviteCode,
+    hotspotTopics,
+    hotspotStatus,
+    hotspotMeta,
+    ...persisted
+  } = state;
+  return persisted;
+}
+
+function saveState(options = {}) {
+  const persisted = getPersistedState();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
+  if (!options.localOnly) scheduleRemoteSave();
+}
+
+function scheduleRemoteSave() {
+  if (syncingRemoteState || !state.authenticated) return;
+  clearTimeout(remoteSaveTimer);
+  remoteSaveTimer = setTimeout(() => {
+    remoteSaveTimer = null;
+    saveRemoteState().catch((error) => console.warn("Failed to save account state", error));
+  }, 800);
+}
+
+async function saveRemoteState() {
+  if (!state.authenticated) return;
+  await postApi("/api/account/save", { state: getPersistedState() });
+}
+
+async function syncAccountState() {
+  if (!state.authenticated) return;
+  syncingRemoteState = true;
+  try {
+    const result = await postApi("/api/account/load", {});
+    if (result.exists && result.state) {
+      const authState = {
+        authenticated: state.authenticated,
+        authRequired: state.authRequired,
+        inviteCode: state.inviteCode
+      };
+      state.accountInviteCode = state.inviteCode;
+      Object.assign(state, result.state, authState);
+      state.accountInviteCode = state.inviteCode;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(getPersistedState()));
+    } else {
+      state.accountInviteCode = state.inviteCode;
+      await saveRemoteState();
+    }
+  } catch (error) {
+    console.warn("Failed to sync account state", error);
+  } finally {
+    syncingRemoteState = false;
+  }
+}
+
+async function clearRemoteState() {
+  if (!state.authenticated) return;
+  try {
+    await postApi("/api/account/clear", {});
+  } catch (error) {
+    console.warn("Failed to clear account state", error);
+  }
 }
 
 function renderAll() {
@@ -258,6 +331,7 @@ async function checkAuth() {
     state.authRequired = Boolean(data.required);
     state.authenticated = Boolean(data.authenticated || !data.required);
     state.inviteCode = data.inviteCode || "";
+    if (state.authenticated) await syncAccountState();
   } catch (_error) {
     state.authRequired = true;
     state.authenticated = false;
@@ -280,8 +354,12 @@ async function loginWithInvite() {
     state.authenticated = true;
     state.authRequired = Boolean(result.required);
     state.inviteCode = result.inviteCode || "";
+    if (state.accountInviteCode && state.accountInviteCode !== state.inviteCode) {
+      resetWorkingState({ accepted: true });
+    }
     els.inviteCodeInput.value = "";
     setApiStatus("已进入体验", "online");
+    await syncAccountState();
     renderAll();
     await checkApiHealth();
   } catch (error) {
@@ -302,7 +380,7 @@ async function logoutInvite() {
   localStorage.removeItem(AUTH_TOKEN_KEY);
   state.authenticated = false;
   state.accepted = false;
-  saveState();
+  saveState({ localOnly: true });
   renderAll();
 }
 

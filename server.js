@@ -23,6 +23,7 @@ const BODY_LIMIT = 12 * 1024 * 1024;
 const TOPHUB_CACHE_TTL_MS = Number(process.env.TOPHUB_CACHE_TTL_MS || 10 * 60 * 1000);
 const TOPHUB_FETCH_TIMEOUT_MS = Number(process.env.TOPHUB_FETCH_TIMEOUT_MS || 6000);
 const PUBLIC_PAGE_TIMEOUT_MS = Number(process.env.PUBLIC_PAGE_TIMEOUT_MS || 10000);
+const ACCOUNT_DATA_DIR = process.env.ACCOUNT_DATA_DIR || path.join(ROOT, "data", "users");
 const PUBLIC_FILES = new Set(["/index.html", "/app.js", "/styles.css"]);
 const sessions = new Map();
 const topHubCache = { expiresAt: 0, entries: [] };
@@ -89,9 +90,14 @@ async function handleApi(req, res, pathname) {
   if (pathname === "/api/auth/login") return loginWithInvite(req, res, payload);
   if (pathname === "/api/auth/logout") return logout(req, res);
 
-  if (INVITE_REQUIRED && !getAuthSession(req)) {
+  const session = getAuthSession(req);
+  if (INVITE_REQUIRED && !session) {
     return sendJson(res, 401, { error: "请先输入邀请码进入体验。" });
   }
+
+  if (pathname === "/api/account/load") return loadAccountState(req, res, session);
+  if (pathname === "/api/account/save") return saveAccountState(req, res, session, payload);
+  if (pathname === "/api/account/clear") return clearAccountState(req, res, session);
 
   if (pathname === "/api/resolve-url") return resolveUrl(req, res, payload);
   if (pathname === "/api/parse-file") return parseFile(req, res, payload);
@@ -109,6 +115,101 @@ async function handleApi(req, res, pathname) {
   if (pathname === "/api/hotspot-topics") return generateHotspotTopics(req, res, payload);
   if (pathname === "/api/revise-stream") return reviseDraftStream(req, res, payload);
   return sendJson(res, 404, { error: "API not found" });
+}
+
+async function loadAccountState(_req, res, session) {
+  const account = getAccountState(session.inviteCode);
+  return sendJson(res, 200, {
+    ok: true,
+    exists: Boolean(account),
+    inviteCode: session.inviteCode,
+    state: account?.state || null,
+    updatedAt: account?.updatedAt || null
+  });
+}
+
+async function saveAccountState(_req, res, session, payload) {
+  const state = sanitizeAccountState(payload.state);
+  if (!state) return sendJson(res, 400, { error: "账号资料格式不正确。" });
+  const saved = writeAccountState(session.inviteCode, state);
+  return sendJson(res, 200, { ok: true, inviteCode: session.inviteCode, updatedAt: saved.updatedAt });
+}
+
+async function clearAccountState(_req, res, session) {
+  const filePath = getAccountStatePath(session.inviteCode);
+  fs.rmSync(filePath, { force: true });
+  return sendJson(res, 200, { ok: true, inviteCode: session.inviteCode });
+}
+
+function getAccountState(inviteCode) {
+  const filePath = getAccountStatePath(inviteCode);
+  if (!fs.existsSync(filePath)) return null;
+  try {
+    const account = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    if (!account || typeof account !== "object") return null;
+    return {
+      state: sanitizeAccountState(account.state) || {},
+      updatedAt: account.updatedAt || null
+    };
+  } catch (error) {
+    console.warn("Failed to read account state", error);
+    return null;
+  }
+}
+
+function writeAccountState(inviteCode, state) {
+  const filePath = getAccountStatePath(inviteCode);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const payload = {
+    inviteCode,
+    updatedAt: new Date().toISOString(),
+    state
+  };
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(payload, null, 2), "utf8");
+  fs.renameSync(tempPath, filePath);
+  return payload;
+}
+
+function getAccountStatePath(inviteCode) {
+  const safeCode = safeAccountId(inviteCode);
+  return path.join(ACCOUNT_DATA_DIR, safeCode, "state.json");
+}
+
+function safeAccountId(value) {
+  return normalizeInviteCode(value || "open").replace(/[^A-Z0-9_-]/g, "_") || "open";
+}
+
+function sanitizeAccountState(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const allowed = new Set([
+    "accepted",
+    "currentStep",
+    "sources",
+    "profile",
+    "rules",
+    "focusNotes",
+    "currentWorkbench",
+    "selectedTopic",
+    "initialDraft",
+    "evaluation",
+    "draft",
+    "finalized",
+    "thinking",
+    "profileChat",
+    "deliverChat",
+    "workflowMode",
+    "workflowStage"
+  ]);
+  const state = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (allowed.has(key)) state[key] = item;
+  }
+  if (Array.isArray(state.sources)) state.sources = state.sources.slice(0, 80);
+  if (Array.isArray(state.rules)) state.rules = state.rules.slice(0, 80);
+  if (Array.isArray(state.profileChat)) state.profileChat = state.profileChat.slice(-40);
+  if (Array.isArray(state.deliverChat)) state.deliverChat = state.deliverChat.slice(-40);
+  return state;
 }
 
 function loginWithInvite(req, res, payload) {

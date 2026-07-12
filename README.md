@@ -178,3 +178,20 @@ miniprogram/RELEASE.md
 - 普通网页链接会由后端尝试读取标题、描述和可见文本，并处理常见 GBK/GB18030 页面。
 - 动态渲染网页会提示补充正文；经观文章链接会尽量读取标题，但正文仍可能需要粘贴补充。
 - 抖音主页完整作品列表通常需要抖音开放平台授权、专门连接器，或用户粘贴/导入作品标题、文案、标签和互动数据。
+
+
+## Invite-code account storage
+
+When `INVITE_CODES` is configured, each invite code is treated as a lightweight account. After login, the browser syncs the user's uploaded sources, style profile, rules, focus notes, draft state, and revision context to the server.
+
+Default storage path:
+
+```text
+data/users/CS-XXXX/state.json
+```
+
+Optional environment variable:
+
+- `ACCOUNT_DATA_DIR`: overrides the account storage directory. The default is `data/users` under the project root.
+- `data/` is ignored by Git so user material is not committed.
+- Render free Web Service local storage is not durable across restarts/redeploys. For long-term retention, attach a Render Disk and point `ACCOUNT_DATA_DIR` to the mounted disk path, or migrate this layer to a database.
