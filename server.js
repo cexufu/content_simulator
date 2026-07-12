@@ -319,48 +319,61 @@ async function relatedInfo(_req, res, payload) {
       topHub: trendContext.topHubItems.length,
       search: trendContext.searchItems.length
     },
-    message: items.length ? "已读取公开来源，优先展示可点击核验的信息。" : "没有读取到可核验的公开信息，请补充更具体的关键词。"
+    message: items.length ? "已读取公开新闻，优先展示可点击核验的新闻来源。" : "没有读取到可核验的公开新闻，请补充更具体的关键词。"
   });
 }
 
 function buildRelatedInfoItems(trendContext, userSignals) {
-  const seeds = new Set([
-    ...userSignals.manualKeywords,
-    ...userSignals.domains,
-    ...userSignals.topics,
-    ...extractSearchWords(userSignals.notes || ""),
-    ...extractSearchWords(userSignals.knowledgeNotes || "")
-  ].map((item) => String(item || "").toLowerCase()).filter(Boolean));
-  const rawItems = [...trendContext.searchItems, ...trendContext.topHubItems];
+  const seeds = getStrictUserSeeds(userSignals).map((item) => String(item || "").toLowerCase()).filter(Boolean);
+  const rawItems = [...trendContext.searchItems];
   return rawItems
     .filter((item) => item && item.title && item.url)
+    .filter((item) => isNewsLikeSearchItem(item))
     .map((item) => {
-      const title = String(item.title || "");
-      const lowered = title.toLowerCase();
-      const relevance = Array.from(seeds).reduce((score, seed) => score + (seed && lowered.includes(seed) ? 2 : 0), 0);
-      const sourceBonus = item.channel === "search" ? 2 : 1;
-      const score = relevance + sourceBonus;
+      const haystack = [item.title, item.summary, item.source, item.query].join(" ").toLowerCase();
+      const relevance = seeds.reduce((score, seed) => score + (seed && haystack.includes(seed) ? 3 : 0), 0);
+      const score = relevance + getNewsSourceScore(item.url, item.source);
       return { item, score };
     })
-    .filter(({ item, score }) => score > 0 || item.channel === "search")
+    .filter(({ item, score }) => !seeds.length || score > 0 || matchesAnySeed(item, seeds))
     .sort((a, b) => b.score - a.score)
     .map(({ item }, index) => ({
       rank: index + 1,
       title: String(item.title || "").slice(0, 120),
-      source: item.source || "公开来源",
-      channel: item.channel || "search",
+      source: item.source || "公开新闻",
+      channel: "news",
       url: item.url,
       publishedAt: item.publishedAt || item.date || "",
       reason: buildRelatedInfoReason(item, userSignals),
-      category: item.channel === "tophub" ? "热榜线索" : "公开新闻",
-      trend: item.channel === "tophub" ? "平台讨论" : "新闻/行业信息"
+      category: "公开新闻",
+      trend: item.publishedAt ? `新闻 · ${item.publishedAt}` : "新闻/行业信息"
     }));
 }
 
+function getStrictUserSeeds(userSignals) {
+  const explicit = uniqueStrings([
+    ...userSignals.manualKeywords,
+    ...userSignals.focusDomains,
+    ...userSignals.focusTopics,
+    ...extractSearchWords(userSignals.notes || ""),
+    ...extractSearchWords(userSignals.knowledgeNotes || "")
+  ]);
+  if (explicit.length) return explicit.slice(0, 8);
+  return uniqueStrings([
+    ...userSignals.domains,
+    ...userSignals.topics,
+    ...userSignals.keywords
+  ]).slice(0, 8);
+}
+
+function matchesAnySeed(item, seeds) {
+  const haystack = [item.title, item.summary, item.source, item.query].join(" ").toLowerCase();
+  return seeds.some((seed) => seed && haystack.includes(seed));
+}
+
 function buildRelatedInfoReason(item, userSignals) {
-  const topic = userSignals.manualKeywords[0] || userSignals.topics[0] || userSignals.domains[0] || userSignals.notes || "关注方向";
-  if (item.channel === "tophub") return `来自热榜，可用于判断“${topic}”附近的平台情绪和公共讨论。`;
-  return `与“${topic}”相关的公开信息，可作为选题依据、背景材料或案例线索。`;
+  const topic = getStrictUserSeeds(userSignals)[0] || "关注方向";
+  return `与“${topic}”相关的可点击新闻来源，可作为选题依据、背景材料或案例线索。`;
 }
 
 async function parseFile(_req, res, payload) {
@@ -1215,18 +1228,14 @@ function extractTopHubCandidates(html) {
 async function fetchPublicSearchItems(queries) {
   const engines = [
     {
-      name: "Bing",
-      buildUrl: (query) => `https://www.bing.com/search?q=${encodeURIComponent(query)}&setlang=zh-CN`
-    },
-    {
-      name: "百度",
-      buildUrl: (query) => `https://www.baidu.com/s?wd=${encodeURIComponent(query)}`
+      name: "Bing News",
+      buildUrl: (query) => `https://www.bing.com/news/search?q=${encodeURIComponent(query)}&setlang=zh-CN&cc=CN&FORM=HDRSC6`
     }
   ];
   const jobs = queries.slice(0, 4).flatMap((query) => engines.map((engine) => ({ query, engine })));
   const settled = await Promise.allSettled(jobs.map((job) => fetchSearchPage(job.query, job.engine)));
   const items = settled.flatMap((result) => (result.status === "fulfilled" ? result.value : []));
-  return dedupeHotspotItems(items).slice(0, 32);
+  return dedupeHotspotItems(items).filter(isNewsLikeSearchItem).slice(0, 32);
 }
 
 async function fetchSearchPage(query, engine) {
@@ -1257,40 +1266,61 @@ function extractSearchCandidates(html, query, engineName) {
     const title = cleanText(match[2]);
     if (!isUsableHotspotTitle(title)) continue;
     const url = normalizeHref(match[1], engineName === "百度" ? "https://www.baidu.com/" : "https://www.bing.com/");
+    if (!isLikelyNewsUrl(url, title)) continue;
     items.push({
       title,
-      source: `公开搜索-${engineName}`,
+      source: "公开新闻-Bing",
       query,
       url,
-      channel: "search"
+      channel: "news"
     });
   }
   return items.slice(0, 12);
 }
 
 function buildHotspotSearchQueries(userSignals, targetDate) {
-  const seeds = [
+  const explicitSeeds = uniqueStrings([
+    ...userSignals.manualKeywords,
+    ...userSignals.focusDomains,
+    ...userSignals.focusTopics,
+    ...extractSearchWords(userSignals.notes || ""),
+    ...extractSearchWords(userSignals.knowledgeNotes || "")
+  ]);
+  const fallbackSeeds = uniqueStrings([
     ...userSignals.keywords,
     ...userSignals.domains,
     ...userSignals.topics
-  ].map((item) => String(item || "").trim()).filter(Boolean);
-  const uniqueSeeds = Array.from(new Set(seeds)).slice(0, 4);
+  ]);
+  const uniqueSeeds = (explicitSeeds.length ? explicitSeeds : fallbackSeeds).slice(0, 4);
   const dateLabel = targetDate.label.replace(/年|月/g, " ").replace("日", "").trim();
-  if (!uniqueSeeds.length) return [`${dateLabel} 今日热点 新闻 热榜`];
-  return uniqueSeeds.map((seed) => `${seed} ${dateLabel} 热点 新闻 讨论 近三天`);
+  if (!uniqueSeeds.length) return [`${dateLabel} 今日热点 新闻`];
+  return uniqueSeeds.map((seed) => `${seed} ${dateLabel} 新闻 近三日`);
 }
 
 function buildHotspotUserSignals(profile, focusProfile, rules, keywords) {
   const manualKeywords = extractSearchWords(keywords);
+  const focusDomains = uniqueStrings(focusProfile.domains || []);
+  const focusTopics = uniqueStrings(focusProfile.topics || []);
+  const explicitSeeds = uniqueStrings([
+    ...manualKeywords,
+    ...focusDomains,
+    ...focusTopics,
+    ...extractSearchWords(focusProfile.notes || ""),
+    ...extractSearchWords(focusProfile.knowledgeNotes || "")
+  ]);
   const domainNames = (profile.domains || []).map((item) => item.name).filter(Boolean);
   const profileKeywords = (profile.keywords || []).map((item) => item.word).filter(Boolean);
+  const useExplicitOnly = explicitSeeds.length > 0;
   return {
     manualKeywords,
-    domains: Array.from(new Set([...(focusProfile.domains || []), ...domainNames])).slice(0, 8),
-    topics: Array.from(new Set([...(focusProfile.topics || []), ...profileKeywords])).slice(0, 12),
-    keywords: Array.from(new Set([...manualKeywords, ...profileKeywords, ...(focusProfile.topics || [])])).slice(0, 12),
+    focusDomains,
+    focusTopics,
+    domains: (useExplicitOnly ? focusDomains : uniqueStrings([...focusDomains, ...domainNames])).slice(0, 8),
+    topics: (useExplicitOnly ? focusTopics : uniqueStrings([...focusTopics, ...profileKeywords])).slice(0, 12),
+    keywords: (useExplicitOnly ? explicitSeeds : uniqueStrings([...manualKeywords, ...profileKeywords, ...focusTopics])).slice(0, 12),
     platforms: focusProfile.platforms || [],
     notes: focusProfile.notes || "",
+    knowledgeNotes: focusProfile.knowledgeNotes || "",
     rules: rules.slice(0, 12),
     styleSummary: {
       confidence: profile.confidence || "",
@@ -1304,9 +1334,12 @@ function buildHotspotUserSignals(profile, focusProfile, rules, keywords) {
 function hasHotspotUserSignals(userSignals) {
   return Boolean(
     userSignals.manualKeywords.length ||
+    userSignals.focusDomains.length ||
+    userSignals.focusTopics.length ||
     userSignals.domains.length ||
     userSignals.topics.length ||
-    String(userSignals.notes || "").trim()
+    String(userSignals.notes || "").trim() ||
+    String(userSignals.knowledgeNotes || "").trim()
   );
 }
 
@@ -1406,6 +1439,54 @@ function isSensitiveHotTopic(title) {
   return /色情|赌博|毒品|血腥|恐怖袭击|枪击|人肉搜索|偷拍视频|尾随|分裂|颠覆|暴力革命|宗教冲突|种族歧视|性别歧视|黄赌毒/i.test(String(title || ""));
 }
 
+function uniqueStrings(items) {
+  return Array.from(new Set((items || []).map((item) => String(item || "").trim()).filter(Boolean)));
+}
+
+function isNewsLikeSearchItem(item) {
+  if (!item || !item.url || !item.title) return false;
+  return isLikelyNewsUrl(item.url, item.title) && !isNonNewsTitle(item.title);
+}
+
+function isLikelyNewsUrl(url, title = "") {
+  let parsed;
+  try {
+    parsed = new URL(String(url || ""));
+  } catch (_error) {
+    return false;
+  }
+  const host = parsed.hostname.replace(/^www\./i, "").toLowerCase();
+  const path = `${parsed.pathname}${parsed.search}`.toLowerCase();
+  if (isNonNewsHost(host) || isSearchResultUrl(host, path)) return false;
+  if (isTrustedNewsHost(host)) return true;
+  if (/(news|xinwen|article|articles|content|n\d+|c\d+|a\d+|20\d{2}[/-]?\d{1,2}[/-]?\d{1,2})/i.test(path)) return true;
+  return /新闻|报道|发布|通报|公告|监管|调查|回应|启动|召开|出台|政策|处罚|风险|行业|记者|中新|新华|央视|人民网|财联社|证券|经济/.test(String(title || ""));
+}
+
+function isTrustedNewsHost(host) {
+  return /(people\.com\.cn|xinhuanet\.com|news\.cn|chinanews\.com|cctv\.com|china\.com\.cn|gov\.cn|thepaper\.cn|yicai\.com|caixin\.com|cls\.cn|stcn\.com|cnstock\.com|21jingji\.com|eeo\.com\.cn|sina\.com\.cn|163\.com|qq\.com|sohu\.com|ifeng\.com|toutiao\.com|guancha\.cn|jiemian\.com|36kr\.com|tmtpost\.com|donews\.com)/i.test(host);
+}
+
+function isNonNewsHost(host) {
+  return /(baike\.baidu\.com|wikipedia\.org|zhihu\.com|douban\.com|bilibili\.com|csdn\.net|jianshu\.com|docin\.com|wenku\.baidu\.com|speedtest|ceping|test|github\.com|gitee\.com|aliyun\.com|cloudflare\.com|microsoft\.com|apple\.com)/i.test(host);
+}
+
+function isSearchResultUrl(host, path) {
+  return /(bing\.com|baidu\.com|google\.com|sogou\.com|so\.com)/i.test(host) && /(\/search|\/s\?|\/link\?|\/ck\/)/i.test(path);
+}
+
+function isNonNewsTitle(title) {
+  return /(百科|维基百科|知识点|全面总结|测速|网速测试|官方网站|登录|注册|下载|招聘|词条|是什么|怎么用|教程|文档|问答|知乎|CSDN|GitHub|豆瓣)/i.test(String(title || ""));
+}
+
+function getNewsSourceScore(url, source = "") {
+  try {
+    const host = new URL(String(url || "")).hostname.replace(/^www\./i, "").toLowerCase();
+    return (isTrustedNewsHost(host) ? 3 : 1) + (String(source || "").includes("Bing") ? 1 : 0);
+  } catch (_error) {
+    return 0;
+  }
+}
 function normalizeHref(href, baseUrl) {
   try {
     return new URL(String(href || ""), baseUrl).href;

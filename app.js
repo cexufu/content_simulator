@@ -30,7 +30,7 @@ const state = {
   selectedTopic: "",
   hotspotTopics: [],
   relatedItems: [],
-  relatedStatus: "确认画像后刷新公开信息。",
+  relatedStatus: "确认画像后刷新公开新闻。",
   hotspotStatus: "基于已确认画像生成；没有真实选题前不展示卡片。",
   hotspotMeta: null,
   initialDraft: "",
@@ -222,7 +222,7 @@ function resetWorkingState(options = {}) {
     selectedTopic: "",
     hotspotTopics: [],
     relatedItems: [],
-    relatedStatus: "确认画像后刷新公开信息。",
+    relatedStatus: "确认画像后刷新公开新闻。",
     hotspotStatus: "基于已确认画像生成；没有真实选题前不展示卡片。",
     hotspotMeta: null,
     initialDraft: "",
@@ -969,7 +969,7 @@ function saveKnowledgeNotes() {
   state.knowledgeNotes = els.knowledgeInput.value.trim();
   resetHotspotResults("知识库已更新，可以重新刷新相关信息或生成热点选题。");
   state.relatedItems = [];
-  state.relatedStatus = "知识库已更新，请刷新公开信息。";
+  state.relatedStatus = "知识库已更新，请刷新公开新闻。";
   saveState();
   renderKnowledgeBase();
   renderWorkbench();
@@ -1009,11 +1009,11 @@ function renderRelatedInfo() {
   const focus = getFocusContext();
   const hasFocus = Boolean(focus.notes || focus.knowledgeNotes || focus.domains.length || focus.topics.length);
   if (!hasFocus) {
-    els.relatedInfoList.innerHTML = `<div class="empty-state">确认风格画像，或补充关注画像/知识库后，再刷新公开信息。</div>`;
+    els.relatedInfoList.innerHTML = `<div class="empty-state">确认风格画像，或补充关注方向/知识库后，再刷新公开新闻。</div>`;
     return;
   }
   if (!state.relatedItems.length) {
-    els.relatedInfoList.innerHTML = `<div class="empty-state">${escapeHtml(state.relatedStatus || "点击刷新公开信息，读取近三日新闻、行业动态和热榜线索。")}</div>`;
+    els.relatedInfoList.innerHTML = `<div class="empty-state">${escapeHtml(state.relatedStatus || "点击刷新公开新闻，读取近三日可核验新闻来源。")}</div>`;
     return;
   }
   els.relatedInfoList.innerHTML = state.relatedItems
@@ -1048,7 +1048,7 @@ async function refreshRelatedInfo() {
   }
   await withBusy(els.relatedRefreshBtn, "读取中", async () => {
     try {
-      state.relatedStatus = "正在读取公开新闻、行业动态和热榜线索...";
+      state.relatedStatus = "正在读取公开新闻和可核验来源...";
       renderRelatedInfo();
       const result = await postApi("/api/related-info", {
         profile: state.profile || {},
@@ -1057,13 +1057,13 @@ async function refreshRelatedInfo() {
         keywords: ""
       });
       state.relatedItems = Array.isArray(result.items) ? result.items : [];
-      state.relatedStatus = result.message || (state.relatedItems.length ? "已读取公开信息。" : "没有读取到可核验信息。");
-      setApiStatus("公开信息已刷新", "online");
+      state.relatedStatus = result.message || (state.relatedItems.length ? "已读取公开新闻。" : "没有读取到可核验新闻。");
+      setApiStatus("公开新闻已刷新", "online");
     } catch (error) {
       console.warn(error);
       state.relatedItems = [];
-      state.relatedStatus = error.message || "公开信息读取失败。";
-      setApiStatus("信息读取失败", "offline");
+      state.relatedStatus = error.message || "公开新闻读取失败。";
+      setApiStatus("新闻读取失败", "offline");
     }
     saveState();
     renderRelatedInfo();
