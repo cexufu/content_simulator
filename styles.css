@@ -474,6 +474,12 @@ input:focus {
   color: var(--muted);
 }
 
+.source-warning {
+  display: block;
+  margin-top: 4px;
+  line-height: 1.5;
+}
+
 .dropzone {
   display: grid;
   place-items: center;

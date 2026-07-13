@@ -10,5 +10,8 @@
   },
   "engines": {
     "node": ">=18"
+  },
+  "dependencies": {
+    "mammoth": "^1.8.0"
   }
 }

@@ -537,6 +537,12 @@ async function addFiles(files) {
         body: result.body || "",
         status: result.status || "已读取",
         limited: Boolean(result.limited),
+        extractionStatus: result.extractionStatus || (result.limited ? "failed" : "complete"),
+        extractionMethod: result.extractionMethod || "",
+        confidence: result.confidence || "medium",
+        warnings: Array.isArray(result.warnings) ? result.warnings : [],
+        suggestedActions: Array.isArray(result.suggestedActions) ? result.suggestedActions : [],
+        sections: Array.isArray(result.sections) ? result.sections : [],
         updatedAt: new Date().toISOString()
       });
       setApiStatus(source.limited ? "文件需补充" : "文件已读取", source.limited ? "offline" : "online");
@@ -567,7 +573,11 @@ function fallbackFileSource(file, extension, error) {
     title: file.name,
     body: `文件已记录，但没有解析出正文。请重新上传 docx、txt、md、html，或直接粘贴正文。错误：${error.message}`,
     status: "解析失败，需粘贴正文",
-    limited: true
+    limited: true,
+    extractionStatus: "failed",
+    confidence: "low",
+    warnings: [error.message],
+    suggestedActions: ["重新上传标准文件", "直接粘贴正文"]
   };
 }
 
@@ -586,7 +596,13 @@ async function addUrlSource() {
         url,
         body: result.body || "",
         status: result.status || "已读取链接",
-        limited: Boolean(result.limited)
+        limited: Boolean(result.limited),
+        extractionStatus: result.extractionStatus || (result.limited ? "limited" : "complete"),
+        extractionMethod: result.extractionMethod || "",
+        confidence: result.confidence || "medium",
+        warnings: Array.isArray(result.warnings) ? result.warnings : [],
+        suggestedActions: Array.isArray(result.suggestedActions) ? result.suggestedActions : [],
+        sections: Array.isArray(result.sections) ? result.sections : []
       };
       setApiStatus(result.limited ? "链接受限" : "已读取链接", result.limited ? "offline" : "online");
     } catch (error) {
@@ -600,7 +616,11 @@ async function addUrlSource() {
           ? "抖音主页链接已记录，但当前环境没有读取到作品列表。请粘贴作品标题、文案、标签或互动数据，以便完成风格学习。"
           : "网页链接已记录，但当前环境没有读取到正文。",
         status: isDouyin ? "抖音读取受限，需补充作品数据" : "读取受限，已记录链接",
-        limited: true
+        limited: true,
+        extractionStatus: "limited",
+        confidence: "low",
+        warnings: [isDouyin ? "平台主页不能稳定读取作品正文" : "链接没有读取到足够正文"],
+        suggestedActions: [isDouyin ? "补充作品截图、作品文案或数据表" : "粘贴网页正文或换可公开读取的文章链接"]
       };
       setApiStatus("链接受限", "offline");
     }
@@ -623,7 +643,8 @@ function renderSources() {
         <div class="source-item">
           <div>
             <strong>${escapeHtml(source.title)}</strong>
-            <small>${sourceLabel(source)} · ${escapeHtml(source.status || "已加入")}</small>
+            <small>${sourceLabel(source)} · ${escapeHtml(source.status || "已加入")}${source.confidence ? ` · 置信度${escapeHtml(source.confidence)}` : ""}</small>
+            ${renderSourceWarnings(source)}
           </div>
           <button class="ghost small" data-remove="${source.id}">删除</button>
         </div>
@@ -639,6 +660,42 @@ function renderSources() {
   });
 }
 
+function renderSourceWarnings(source) {
+  const warnings = Array.isArray(source.warnings) ? source.warnings.filter(Boolean).slice(0, 2) : [];
+  const actions = Array.isArray(source.suggestedActions) ? source.suggestedActions.filter(Boolean).slice(0, 2) : [];
+  const parts = [...warnings, ...actions];
+  if (!parts.length) return "";
+  return `<small class="source-warning">${escapeHtml(parts.join("；"))}</small>`;
+}
+
+function getMaterialReadiness() {
+  const items = state.sources || [];
+  const readable = items.filter((source) => source.body && !isLimitedSource(source));
+  const partial = readable.filter((source) => source.extractionStatus === "partial");
+  const failed = items.filter((source) => isLimitedSource(source));
+  return {
+    total: items.length,
+    readable: readable.length,
+    partial: partial.length,
+    failed: failed.length,
+    failedItems: failed.slice(0, 4),
+    readableItems: readable.slice(0, 4)
+  };
+}
+
+function buildNoReadableMaterialMessage() {
+  const summary = getMaterialReadiness();
+  const failedLines = summary.failedItems.map((source) => {
+    const reason = (source.warnings && source.warnings[0]) || source.status || "未读取到正文";
+    return `- ${source.title || "未命名材料"}：${reason}`;
+  });
+  return [
+    `本次共加入 ${summary.total} 条材料，但没有形成可分析正文。`,
+    `已可分析：${summary.readable} 条；部分读取：${summary.partial} 条；读取失败/受限：${summary.failed} 条。`,
+    failedLines.length ? "\n受限材料：\n" + failedLines.join("\n") : "",
+    "\n下一步可以：复制粘贴正文、重新上传标准 DOCX/TXT/MD/HTML，或把平台主页/作品截图转成可见文字后补充。"
+  ].filter(Boolean).join("\n");
+}
 function sourceLabel(source) {
   if (source.type === "douyin") return "抖音链接";
   if (source.url) return "网页链接";
@@ -649,7 +706,7 @@ function sourceLabel(source) {
 async function analyzeAndGo(shouldNavigate = true) {
   if (!hasReadableSource()) {
     setApiStatus("缺少正文", "offline");
-    alert("没有读到可分析正文。请粘贴文章正文，或换一个可公开读取的新闻/文章链接。抖音主页和部分动态网页需要补充作品数据。");
+    alert(buildNoReadableMaterialMessage());
     return;
   }
   profileAnalysisInFlight = true;
@@ -796,7 +853,9 @@ function getConfidence(sources) {
 }
 
 function isLimitedSource(source) {
-  return Boolean(source.limited) || /待后端|读取受限|需补充/.test(source.status || "");
+  if (!source) return true;
+  if (["complete", "partial"].includes(source.extractionStatus) && source.body) return false;
+  return Boolean(source.limited) || /待后端|读取受限|需补充|解析失败/.test(source.status || "");
 }
 
 function buildContentFeatures(text, domains) {

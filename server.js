@@ -26,6 +26,7 @@ const TOPHUB_FETCH_TIMEOUT_MS = Number(process.env.TOPHUB_FETCH_TIMEOUT_MS || 60
 const PUBLIC_PAGE_TIMEOUT_MS = Number(process.env.PUBLIC_PAGE_TIMEOUT_MS || 10000);
 const ACCOUNT_DATA_DIR = process.env.ACCOUNT_DATA_DIR || path.join(ROOT, "data", "users");
 const PUBLIC_FILES = new Set(["/index.html", "/app.js", "/styles.css"]);
+let mammothModule = null;
 const sessions = new Map();
 const topHubCache = { expiresAt: 0, entries: [] };
 
@@ -447,23 +448,167 @@ async function parseFile(_req, res, payload) {
   }
 }
 
-function extractDocxText(buffer) {
+async function parseDocxSource(buffer, title) {
+  const warnings = [];
+  let mammothText = "";
+  const mammoth = loadMammoth();
+  if (mammoth) {
+    try {
+      const result = await mammoth.extractRawText({ buffer });
+      mammothText = String(result.value || "").trim();
+      for (const message of result.messages || []) {
+        if (message?.message) warnings.push(message.message);
+      }
+    } catch (error) {
+      warnings.push(`mammoth 解析失败，已尝试 XML 兜底：${error.message}`);
+    }
+  } else {
+    warnings.push("mammoth 未安装，使用 XML 兜底解析。线上部署后会自动安装依赖。");
+  }
+
+  let xmlText = "";
+  let xmlWarnings = [];
+  try {
+    const xmlResult = extractDocxStructuredText(buffer);
+    xmlText = xmlResult.text;
+    xmlWarnings = xmlResult.warnings;
+  } catch (error) {
+    xmlWarnings.push(`XML 兜底解析失败：${error.message}`);
+  }
+
+  const body = chooseBetterText(mammothText, xmlText);
+  const mergedWarnings = uniqueStrings([...warnings, ...xmlWarnings]);
+  if (!body) {
+    return buildFailedSource({
+      type: "docx",
+      title,
+      reason: "没有检测到普通正文，可能是图片稿、扫描稿、复杂文本框或非标准 DOCX。",
+      extractionMethod: mammoth ? "mammoth+xml-fallback" : "xml-fallback",
+      warnings: mergedWarnings,
+      suggestedActions: ["确认 Word 中的文字可以被鼠标选中", "另存为标准 DOCX 后重传", "复制正文粘贴到左侧文本框", "如果是图片稿，请上传截图或手动粘贴正文"]
+    });
+  }
+
+  return buildParsedSource({
+    type: "docx",
+    title,
+    body,
+    sections: inferTextSections(body),
+    extractionMethod: mammoth ? "mammoth+xml-fallback" : "xml-fallback",
+    warnings: mergedWarnings
+  });
+}
+
+function loadMammoth() {
+  if (mammothModule) return mammothModule;
+  try {
+    mammothModule = require("mammoth");
+    return mammothModule;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function chooseBetterText(primary, fallback) {
+  const a = normalizeExtractedText(primary);
+  const b = normalizeExtractedText(fallback);
+  return b.length > a.length * 1.25 ? b : a;
+}
+
+function normalizeExtractedText(text) {
+  return String(text || "")
+    .split(String.fromCharCode(13)).join("\n")
+    .replace(new RegExp("[ \t\f\v]+", "g"), " ")
+    .replace(new RegExp("\\n\\s+", "g"), "\n")
+    .replace(new RegExp("\\n{3,}", "g"), "\n\n")
+    .trim();
+}
+
+function extractDocxStructuredText(buffer) {
   const entries = unzipEntries(buffer);
+  const headerFooterPattern = new RegExp("^word/(header|footer)\\d+\\.xml$");
   const xmlNames = Object.keys(entries).filter((name) => {
     return (
       name === "word/document.xml" ||
-      /^word\/(header|footer)\d+\.xml$/.test(name) ||
+      headerFooterPattern.test(name) ||
       ["word/footnotes.xml", "word/endnotes.xml", "word/comments.xml"].includes(name)
     );
   });
+  const warnings = [];
+  if (Object.keys(entries).some((name) => name.startsWith("word/media/"))) warnings.push("文档包含图片，图片中文字不会被 DOCX 正文解析覆盖。");
+  if (entries["word/comments.xml"]) warnings.push("文档包含批注，已尝试读取批注文字。");
   const text = xmlNames
     .map((name) => extractDocxXmlText(entries[name].toString("utf8")))
     .filter(Boolean)
     .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
+    .replace(new RegExp("\\n{3,}", "g"), "\n\n")
     .trim();
-  if (!text) throw new Error("DOCX 中没有读取到正文");
-  return text;
+  return { text, warnings };
+}
+
+function buildParsedSource({ type, title, body, sections = [], tables = [], mediaSignals = [], extractionMethod = "local", warnings = [] }) {
+  const text = normalizeExtractedText(body).slice(0, 24000);
+  const extractionStatus = text.length >= 500 ? "complete" : "partial";
+  const confidence = text.length >= 1200 ? "high" : text.length >= 300 ? "medium" : "low";
+  const status = extractionStatus === "complete" ? `已解析 · ${text.length}字` : `部分读取 · ${text.length}字`;
+  return {
+    type,
+    title,
+    body: text,
+    sections: sections.length ? sections : inferTextSections(text),
+    tables,
+    mediaSignals,
+    extractionMethod,
+    extractionStatus,
+    confidence,
+    warnings: uniqueStrings(warnings).slice(0, 6),
+    suggestedActions: extractionStatus === "partial" ? ["可继续读稿，但建议补充原文或更多材料提高准确度"] : [],
+    status,
+    limited: false
+  };
+}
+function buildFailedSource({ type, title, reason, extractionMethod = "local", warnings = [], suggestedActions = [] }) {
+  return {
+    type,
+    title,
+    body: reason,
+    sections: [],
+    tables: [],
+    mediaSignals: [],
+    extractionMethod,
+    extractionStatus: "failed",
+    confidence: "low",
+    warnings: uniqueStrings(warnings.length ? warnings : [reason]).slice(0, 6),
+    suggestedActions: suggestedActions.length ? suggestedActions : ["粘贴正文", "重新上传标准文件", "上传截图或可复制文字"],
+    status: "解析失败，需补充正文",
+    limited: true
+  };
+}
+
+function inferTextSections(text) {
+  const lines = String(text || "").split(new RegExp("\\n+")).map((line) => line.trim()).filter(Boolean);
+  const sections = [];
+  for (const line of lines.slice(0, 80)) {
+    const type = classifyContentLine(line);
+    if (type) sections.push({ type, text: line.slice(0, 500) });
+  }
+  return sections.slice(0, 30);
+}
+
+function classifyContentLine(line) {
+  const text = String(line || "").trim();
+  if (!text) return "";
+  if (new RegExp("^(标题|题目|主题|选题)[:：]").test(text) || (text.length <= 32 && new RegExp("[：?？！!]?$").test(text))) return "title";
+  if (new RegExp("^(开场|开头|引入|hook|口播开场)[:：]", "i").test(text)) return "opening";
+  if (new RegExp("^(转场|过渡|承接)[:：]").test(text)) return "transition";
+  if (new RegExp("^(结尾|收尾|总结|互动引导|评论区)[:：]").test(text)) return "ending";
+  if (new RegExp("^(口播|旁白|对白|画面|镜头|字幕|BGM|音乐)[:：]", "i").test(text)) return "script";
+  return "body";
+}
+function extractDocxText(buffer) {
+  const result = extractDocxStructuredText(buffer);
+  if (!result.text) throw new Error("DOCX 中没有读取到正文");
+  return result.text;
 }
 
 function unzipEntries(buffer) {
@@ -1770,16 +1915,22 @@ function parseJson(text) {
 function normalizeSources(sources) {
   let total = 0;
   return sources.slice(0, 24).map((source) => {
-    const limited = Boolean(source.limited) || /读取受限|需补充|待后端/.test(source.status || "");
-    const body = limited ? "" : String(source.body || "").slice(0, Math.max(0, 24000 - total));
+    const extractionStatus = String(source.extractionStatus || "");
+    const statusText = String(source.status || "");
+    const failed = extractionStatus === "failed" || /解析失败|读取受限|需补充|待后端/.test(statusText);
+    const body = failed ? "" : String(source.body || "").slice(0, Math.max(0, 24000 - total));
     total += body.length;
     return {
       type: source.type || "text",
       title: String(source.title || "未命名材料").slice(0, 160),
       status: source.status || "",
+      extractionStatus: extractionStatus || (failed ? "failed" : body ? "complete" : "limited"),
+      confidence: source.confidence || "medium",
+      warnings: normalizeList(source.warnings, []).slice(0, 6),
+      sections: Array.isArray(source.sections) ? source.sections.slice(0, 30) : [],
       url: source.url || "",
       body,
-      limited
+      limited: failed || !body
     };
   });
 }
